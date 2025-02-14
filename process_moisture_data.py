@@ -1,6 +1,18 @@
 import pandas as pd
 from grids import ERA5LandGrid
-from open_meteo import fetch_global_tilted_irradiance, fetch_vpd_prec
+from open_meteo import fetch_global_tilted_irradiance, fetch_archive_variables
+
+
+def proc_fuel_moisture_meg():
+    """Read and prepare observed fuel moisture data for UK"""
+    dfr = pd.concat(pd.read_excel('/home/tadas/Downloads/Flammability_1.xlsx', sheet_name=None), ignore_index=True)
+    dfr = dfr.ffill()
+    dfr[["latitude", "longitude"]] = dfr["Coordinates"].str.split(
+        ", ", n=1, expand=True
+    ).astype('float')
+    dfr.loc[dfr.longitude > 0, 'longitude'] = dfr.loc[dfr.longitude > 0, 'longitude'] * -1 
+    dfr['date'] = pd.to_datetime(dfr.Date.astype(str) + ' ' + dfr.Time.astype(str))
+    dfr.
 
 
 def proc_fuel_moisture_UK():
@@ -61,11 +73,12 @@ def get_vpd_precipitation(dfr):
     dfrs = []
     for nr, row in dfrg.iterrows():
         try:
-            vpd_h = fetch_vpd_prec(
+            vpd_h = fetch_archive_variables(
                 row.latitude,
                 row.longitude,
                 start_date,
                 end_date,
+                ["vapour_pressure_deficit"],
             )
             vpd_h["latind"] = row.latind.astype(int)
             vpd_h["lonind"] = row.lonind.astype(int)

@@ -64,7 +64,7 @@ def fetch_global_tilted_irradiance(lat, lon, start_date, end_date, tilt, azimuth
 
 
 # Setup the Open-Meteo API client with cache and retry on error
-def fetch_vpd_prec(lat, lon, start_date, end_date):
+def fetch_archive_variables(lat, lon, start_date, end_date, variables):
     # Make sure all required weather variables are listed here
     # The order of variables in hourly or daily is important to assign them correctly below
 
@@ -75,7 +75,7 @@ def fetch_vpd_prec(lat, lon, start_date, end_date):
         lon,
         start_date,
         end_date,
-        ["vapour_pressure_deficit", "precipitation"],
+        variables,
     )
     return dfr
 
