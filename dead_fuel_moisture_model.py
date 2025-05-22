@@ -1,7 +1,7 @@
 import sys
 
 # modify this path to match your environment
-sys.path.append("/Users/tadas/repos/nelson-python/")
+sys.path.append("/Users/tadas/repos/nelson-fuel-moisture-python/")
 from typing import List
 
 import numpy as np
@@ -108,6 +108,7 @@ class DeadFuelMoistureModel:
         fuel_encoded = encoder.fit_transform(fuel_type_column)
         dfr = dfr.join(fuel_encoded)
 
+        # keep negatives but set negative values to zero
         dfr = dfr[(dfr["fmc_%"] < 60) & (dfr["fmc_%"] > 0)]
 
         # Dictionary of feature columns, their dtypes and monotonicity constraints
@@ -168,5 +169,5 @@ class DeadFuelMoistureModel:
 if __name__ == "__main__":
     model = DeadFuelMoistureModel()
     model.train_model()
-    model.save_model("model_onehot_dead.onnx")
+    # model.save_model("model_onehot_dead.onnx")
     # model.test_saved_model("model_onehot_dead.onnx")

@@ -1,22 +1,33 @@
+import time
+
 import pandas as pd
+
 from grids import ERA5LandGrid
-from open_meteo import fetch_global_tilted_irradiance, fetch_vpd_prec
+from open_meteo import fetch_hourly, fetch_daily
+
 
 def proc_fuel_moisture_meg():
     """Read and prepare observed fuel moisture data for UK"""
-    dfr = pd.concat(pd.read_excel('/home/tadas/Downloads/Flammability_1.xlsx', sheet_name=None), ignore_index=True)
+    dfr = pd.concat(
+        pd.read_excel(
+            "/Users/tadas/repos/fuel-moisture/data/Flammability Data 30.01.xlsx",
+            sheet_name=None,
+        ),
+        ignore_index=True,
+    )
     dfr = dfr.ffill()
-    dfr[["latitude", "longitude"]] = dfr["Coordinates"].str.split(
-        ", ", n=1, expand=True
-    ).astype('float')
-    dfr.loc[dfr.longitude > 0, 'longitude'] = dfr.loc[dfr.longitude > 0, 'longitude'] * -1 
-    dfr['date'] = pd.to_datetime(dfr.Date.astype(str) + ' ' + dfr.Time.astype(str))
-    dfr.
+    dfr[["latitude", "longitude"]] = (
+        dfr["Coordinates"].str.split(", ", n=1, expand=True).astype("float")
+    )
+    dfr.loc[dfr.longitude > 0, "longitude"] = (
+        dfr.loc[dfr.longitude > 0, "longitude"] * -1
+    )
+    dfr["date"] = pd.to_datetime(dfr.Date.astype(str) + " " + dfr.Time.astype(str))
 
 
 def proc_fuel_moisture_UK():
     """Read and prepare observed fuel moisture data for UK"""
-    dfr = pd.read_csv("/Users/tadas/modFire/ndmi/data/UK_fuel_moisture_dataset.csv")
+    dfr = pd.read_csv("./data/UK_fuel_moisture.csv")
     dfr.columns = dfr.columns.str.lower()
     dfr["date"] = pd.to_datetime(dfr["date"], dayfirst=True)
     # filling missing time of collection with 13:00
@@ -35,6 +46,145 @@ def proc_fuel_moisture_UK():
     dfr["latind"] = yy.astype(int)
     dfr["lonind"] = xx.astype(int)
     return dfr
+
+
+def get_weather_features(dfr: pd.DataFrame) -> pd.DataFrame:
+    """Fetch historical weather for given observations in dfr which
+    must have columns: site, latitude, longitude, latind, lonind and date"""
+    # First fetch hourly weather variables per unique grid cell
+    url = "https://archive-api.open-meteo.com/v1/archive"
+
+    dfrg = (
+        dfr.groupby(["site"])[
+            ["longitude", "latitude", "latind", "lonind", "slope", "aspect"]
+        ]
+        .first()
+        .reset_index()
+    )
+    hourly_variables = [
+        "temperature_2m",
+        "relative_humidity_2m",
+        "precipitation",
+        "cloud_cover",
+        "wind_speed_10m",
+        "wind_direction_10m",
+        "wind_gusts_10m",
+        "vapour_pressure_deficit",
+        "global_tilted_irradiance",
+    ]
+    results = []
+    for nr, row in dfrg.iterrows():
+        print("Fetching data for row", nr, row)
+        mindate = dfr.loc[
+            (dfr.latind == row.latind) & (dfr.lonind == row.lonind), "date"
+        ].min()
+        maxdate = dfr.loc[
+            (dfr.latind == row.latind) & (dfr.lonind == row.lonind), "date"
+        ].max()
+        start_date = (mindate - pd.DateOffset(months=1)).strftime("%Y-%m-%d")
+        end_date = (maxdate + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+
+        opt_params = {
+            "tilt": row.slope,
+            "azimuth": row.aspect - 180,
+        }
+
+        res = fetch_hourly(
+            url,
+            row.latitude,
+            row.longitude,
+            start_date,
+            end_date,
+            hourly_variables,
+            opt_params,
+        )
+        time.sleep(1)
+        res_daily = fetch_daily(
+            url,
+            row.latitude,
+            row.longitude,
+            start_date,
+            end_date,
+            ["soil_moisture_0_to_7cm_mean"],
+        )
+        res_comb = pd.concat([res, pd.DataFrame(row).T.reset_index(drop=True)], axis=1)
+        res_comb = res_comb.ffill()
+        res_comb["date_"] = res_comb.date.dt.floor("d")
+
+        res_daily["date_"] = res_daily.date.dt.floor("d")
+        res_comb = res_comb.merge(
+            res_daily[["date_", "soil_moisture_0_to_7cm_mean"]],
+            on=["date_"],
+            how="left",
+        )
+        results.append(res_comb)
+        time.sleep(10)
+    return pd.concat(results)
+
+
+def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.DataFrame:
+    # First generate columns with 5 hours of past vpd and gti values
+    for hour in range(1, 6):
+        results[f"vpd-{hour}"] = results["vapour_pressure_deficit"].shift(hour)
+        results[f"gti-{hour}"] = results["global_tilted_irradiance"].shift(hour)
+    # Then, generate columns with 24 hours of past soil moisture values
+    for hour in range(1, 25):
+        results[f"soil_moisture_0_to_7cm_mean-{hour}"] = (
+            results["soil_moisture_0_to_7cm_mean"].shift(hour)
+        )
+     ff
+
+
+    
+
+
+def get_soil_features(dfr: pd.DataFrame) -> pd.DataFrame:
+    """Fetch historical weather for given observations in dfr which
+    must have columns: site, latitude, longitude, latind, lonind and date"""
+    # First fetch hourly weather variables per unique grid cell
+    url = "https://archive-api.open-meteo.com/v1/archive"
+
+    dfrg = (
+        dfr.groupby(["site"])[
+            ["longitude", "latitude", "latind", "lonind", "slope", "aspect"]
+        ]
+        .first()
+        .reset_index()
+    )
+    daily_variables = [
+        "global_tilted_irradiance",
+    ]
+    results = []
+    for nr, row in dfrg.iterrows():
+        print("Fetching data for row", nr, row)
+        mindate = dfr.loc[
+            (dfr.latind == row.latind) & (dfr.lonind == row.lonind), "date"
+        ].min()
+        maxdate = dfr.loc[
+            (dfr.latind == row.latind) & (dfr.lonind == row.lonind), "date"
+        ].max()
+        start_date = (mindate - pd.DateOffset(months=1)).strftime("%Y-%m-%d")
+        end_date = (maxdate + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+
+        opt_params = {
+            "tilt": row.slope,
+            "azimuth": row.aspect - 180,
+        }
+
+        res = fetch_hourly(
+            url,
+            row.latitude,
+            row.longitude,
+            start_date,
+            end_date,
+            hourly_variables,
+            opt_params,
+        )
+        res_comb = pd.concat([res, pd.DataFrame(row).T.reset_index(drop=True)], axis=1)
+        results.append(res_comb.ffill())
+
+        time.sleep(10)
+    return pd.concat(results)
 
 
 def fetch_gti_hourly_hist(dfr):
