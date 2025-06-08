@@ -1,6 +1,7 @@
 import time
 
 import pandas as pd
+from sklearn.model_selection import LearningCurveDisplay
 
 from grids import ERA5LandGrid
 from open_meteo import fetch_hourly, fetch_daily
@@ -105,7 +106,13 @@ def get_weather_features(dfr: pd.DataFrame) -> pd.DataFrame:
             row.longitude,
             start_date,
             end_date,
-            ["soil_moisture_0_to_7cm_mean"],
+            [
+                "soil_moisture_0_to_7cm_mean",
+                "soil_moisture_7_to_28cm_mean",
+                "soil_moisture_28_to_100cm_mean",
+                "daylight_duration",
+                "sunshine_duration",
+            ],
         )
         res_comb = pd.concat([res, pd.DataFrame(row).T.reset_index(drop=True)], axis=1)
         res_comb = res_comb.ffill()
@@ -113,29 +120,77 @@ def get_weather_features(dfr: pd.DataFrame) -> pd.DataFrame:
 
         res_daily["date_"] = res_daily.date.dt.floor("d")
         res_comb = res_comb.merge(
-            res_daily[["date_", "soil_moisture_0_to_7cm_mean"]],
+            res_daily[
+                [
+                    "date_",
+                    "soil_moisture_0_to_7cm_mean",
+                    "soil_moisture_7_to_28cm_mean",
+                    "soil_moisture_28_to_100cm_mean",
+                    "daylight_duration",
+                    "sunshine_duration",
+                ]
+            ],
             on=["date_"],
             how="left",
         )
         results.append(res_comb)
         time.sleep(10)
+    results.to_parquet("data/weather_results.parquet", index=False)
     return pd.concat(results)
 
 
-def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.DataFrame:
+def prepare_weather_features() -> pd.DataFrame:
     # First generate columns with 5 hours of past vpd and gti values
+    dfr = proc_fuel_moisture_UK()
+    results = pd.read_parquet("data/weather_results.parquet")
+    results.rename(
+        {
+            "vapour_pressure_deficit": "vpd",
+            "soil_moisture_0_to_7cm_mean": "smm7",
+            "soil_moisture_7_to_28cm_mean": "smm28",
+            "soil_moisture_28_to_100cm_mean": "smm100",
+            "global_tilted_irradiance": "gti",
+            "daylight_duration": "ddur",
+            "sunshine_duration": "sdur",
+        },
+        axis=1,
+        inplace=True,
+    )
     for hour in range(1, 6):
-        results[f"vpd-{hour}"] = results["vapour_pressure_deficit"].shift(hour)
-        results[f"gti-{hour}"] = results["global_tilted_irradiance"].shift(hour)
+        results[f"vpd-{hour}"] = results["vpd"].shift(hour)
+        results[f"gti-{hour}"] = results["gti"].shift(hour)
     # Then, generate columns with 24 hours of past soil moisture values
-    for hour in range(1, 25):
-        results[f"soil_moisture_0_to_7cm_mean-{hour}"] = (
-            results["soil_moisture_0_to_7cm_mean"].shift(hour)
-        )
-     ff
+    # for hour in range(1, 25):
+    #     results[f"smm7-{hour}"] = results["smm7"].shift(hour)
+    #     results[f"smm28-{hour}"] = results["smm28"].shift(hour)
+    #     results[f"smm100-{hour}"] = results["smm100"].shift(hour)
 
+    daily_vpd = results.groupby(results.date_)["vpd"].mean().reset_index()
+    # Step 2: Create a DataFrame of lagged daily values
 
-    
+    for i in range(1, 16):
+        daily_vpd[f"vpd-{i}d"] = daily_vpd["vpd"].shift(i)
+
+    daily_vpd.rename(columns={"vpd": "vpd-0d"}, inplace=True)
+
+    results = results.merge(daily_vpd, on="date_", how="left")
+    # Training dataset
+    fe = dfr.merge(
+        results.drop(
+            ["slope", "aspect", "lonind", "latind", "longitude", "latitude"], axis=1
+        ),
+        on=["site", "date"],
+        how="left",
+    )
+    fe.to_parquet("data/training_dataset_features.parquet")
+    # Time Series features dataset
+
+    fe_time_series = results.merge(
+        dfr.groupby(["site"])["elevation"].first().reset_index(),
+        on=["site"],
+        how="left",
+    )
+    fe_time_series.to_parquet("data/weather_site_features.parquet")
 
 
 def get_soil_features(dfr: pd.DataFrame) -> pd.DataFrame:
@@ -298,3 +353,17 @@ def get_features(fuel_type, days):
     fe.to_parquet(f"data/features_{fuel_type}_{days}.parquet")
     return fe
     # fe.to_parquet(f"data/features_{fuel_type}.parquet")
+    #
+
+
+if __name__ == "__main__":
+    # dfr = proc_fuel_moisture_UK()
+    # results = pd.read_parquet("data/weather_results.parquet")
+    # dfr = proc_fuel_moisture_UK()
+    # results = get_weather_features(dfr)
+    prepare_weather_features()
+    # results.to_parquet("data/weather_features.parquet")
+    # get_features("Moor grass dead", 7)
+    # get_features("Moor grass dead", 14)
+    # get_features("Moor grass dead", 30)
+    # get_features("Moor grass dead", 60)

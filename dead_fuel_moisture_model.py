@@ -7,16 +7,23 @@ from typing import List
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from scipy.stats import linregress
 
 
 import onnxruntime as rt
 from skl2onnx import to_onnx
 from sklearn.model_selection import train_test_split
-from sklearn import datasets, ensemble
+from sklearn import ensemble
+from sklearn.base import clone
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import root_mean_squared_error
 
 from process_moisture_data import proc_fuel_moisture_UK
+from nelson_moisture import nelson_fuel_moisture
+
+
+def calculate_nelson_moisture(dfr):
+    pass
 
 
 def plot_training_vs_testing(model, X_train, X_test, y_train, y_test):
@@ -52,7 +59,7 @@ def training_dataset(fuels: List[str]):
     # Read UK fuel moisture dataset (Birmingham)
     dfr = proc_fuel_moisture_UK()
     # Read features dataset
-    fe = pd.read_parquet("data/features_All_1.parquet")
+    fe = pd.read_parquet("data/training_dataset_features.parquet")
     fe["month"] = fe.date.dt.month
     fe["doy"] = fe.date.dt.dayofyear
     fe["hour"] = fe.date.dt.hour
@@ -108,25 +115,28 @@ class DeadFuelMoistureModel:
         fuel_encoded = encoder.fit_transform(fuel_type_column)
         dfr = dfr.join(fuel_encoded)
 
-        # keep negatives but set negative values to zero
+        # TODO set negative fmc_% values to zero instead?
         dfr = dfr[(dfr["fmc_%"] < 60) & (dfr["fmc_%"] > 0)]
 
         # Dictionary of feature columns, their dtypes and monotonicity constraints
         features_dict = {
-            "vpd_20": {"type": "float32", "monotonic": -1},
-            "vpd_21": {"type": "float32", "monotonic": -1},
-            "vpd_22": {"type": "float32", "monotonic": -1},
-            "vpd_23": {"type": "float32", "monotonic": -1},
-            "vpd_24": {"type": "float32", "monotonic": -1},
-            "gti_20": {"type": "float32", "monotonic": -1},
-            "gti_21": {"type": "float32", "monotonic": -1},
-            "gti_22": {"type": "float32", "monotonic": -1},
-            "gti_23": {"type": "float32", "monotonic": -1},
-            "gti_24": {"type": "float32", "monotonic": -1},
+            "vpd": {"type": "float32", "monotonic": -1},
+            "vpd-1": {"type": "float32", "monotonic": -1},
+            "vpd-2": {"type": "float32", "monotonic": -1},
+            "vpd-3": {"type": "float32", "monotonic": -1},
+            "vpd-4": {"type": "float32", "monotonic": -1},
+            "gti": {"type": "float32", "monotonic": -1},
+            "gti-1": {"type": "float32", "monotonic": -1},
+            "gti-2": {"type": "float32", "monotonic": -1},
+            "gti-3": {"type": "float32", "monotonic": -1},
+            "gti-4": {"type": "float32", "monotonic": -1},
+            "smm7": {"type": "float32", "monotonic": 1},
+            "smm28": {"type": "float32", "monotonic": 1},
+            "smm100": {"type": "float32", "monotonic": 1},
             "slope": {"type": "float32", "monotonic": 0},
             "aspect": {"type": "float32", "monotonic": 0},
             "elevation": {"type": "float32", "monotonic": 0},
-            "month": {"type": "float32", "monotonic": 0},
+            # "month": {"type": "float32", "monotonic": 0},
         }
 
         # add types and constrains for OneHotEncoder fuel categories/columns
@@ -142,11 +152,40 @@ class DeadFuelMoistureModel:
 
         return features, dfr[self.y_column], features_dict
 
+    def encode_fuel_features(self, dfr):
+        """Encode fuel features using OneHotEncoder"""
+        dfr["fuel"] = "Other"
+        for fuel in self.fuels:
+            dfr.loc[dfr["fuel_type"].str.contains(fuel), "fuel"] = fuel
+        fuel_type_column = dfr[[self.fuels_cat_column]]
+        encoder = OneHotEncoder(sparse_output=False).set_output(transform="pandas")
+        fuel_encoded = encoder.fit_transform(fuel_type_column)
+        dfr = dfr.join(fuel_encoded)
+        # add types and constrains for OneHotEncoder fuel categories/columns
+        # for fuel_name in fuel_encoded.columns:
+        #     self.feature_types[fuel_name] = {"type": "float32", "monotonic": 0}
+        return dfr
+
+    def train_model_full(self):
+        # X_train, X_test, y_train, y_test = train_test_split(
+        #     self.features,
+        #     self.y_features,
+        #     test_size=1 / 4,
+        # )
+        self.model.fit(self.features.values, self.y_features)
+
+    def prepare_training_dataset(self):
+        dfr = training_dataset(self.fuels)
+        dfr = self.encode_fuel_features(dfr)
+        # TODO set negative fmc_% values to zero instead?
+        dfr = dfr[(dfr["fmc_%"] < 60) & (dfr["fmc_%"] > 0)]
+        return dfr
+
     def train_model(self):
         X_train, X_test, y_train, y_test = train_test_split(
             self.features,
             self.y_features,
-            test_size=1 / 6,
+            test_size=1 / 4,
         )
         self.model.fit(X_train, y_train)
         plot_training_vs_testing(self.model, X_train, X_test, y_train, y_test)
@@ -165,9 +204,83 @@ class DeadFuelMoistureModel:
         plt.scatter(pred_ort, pred_skl)
         plt.show()
 
+    def validation_per_location(self, group_cols: List[str] = ["lonind", "latind"]):
+        """
+        Perform spatial cross-validation using unique (lonind, latind) groups.
+
+        Parameters:
+            group_cols (list): Columns used for grouping (default ['lonind', 'latind']).
+
+        Returns:
+            results (pd.DataFrame): Per-group scores.
+            all_predictions (pd.DataFrame): DataFrame with true/predicted values for each group.
+        """
+        # fets = pd.read_parquet("data/weather_site_features.parquet")
+        dfr = self.prepare_training_dataset()
+        # Dictionary of feature columns, their dtypes and monotonicity constraints
+        # for day in range(1, 15):
+        #     features_dict[f"smm7-{day}"] = {"type": "float32", "monotonic": 1}
+        # for day in range(1, 15):
+        #     features_dict[f"smm28-{day}"] = {"type": "float32", "monotonic": 1}
+        # for day in range(1, 15):
+        #     features_dict[f"smm100-{day}"] = {"type": "float32", "monotonic": 1}
+
+        # Select feature columns and cast them to the correct data types
+        #
+        # features = (
+        #     dfr[self.live_features_dict.keys()]
+        #     .copy()
+        #     .astype({k: v["type"] for k, v in self.live_features_dict.items()})
+        # )
+
+        results = []
+        predictions = []
+
+        grouped = dfr.groupby(group_cols)
+        print("features", self.feature_types.keys())
+        for group_key, val_df in grouped:
+            print("proc group", group_key)
+            train_df = dfr.loc[~dfr.index.isin(val_df.index)]
+
+            X_train = train_df[self.feature_types.keys()]
+            y_train = train_df[self.y_column]
+            X_val = val_df[self.feature_types.keys()]
+            y_val = val_df[self.y_column]
+
+            model_copy = clone(self.model)
+            model_copy.fit(X_train, y_train)
+            y_pred = model_copy.predict(X_val)
+
+            pred_df = val_df.copy()
+            pred_df["prediction"] = y_pred
+
+            for i, col in enumerate(group_cols):
+                pred_df[col] = group_key[i]
+            predictions.append(pred_df)
+            sl, inter, pearsr, pv, stde = linregress(y_val, y_pred)
+            rms = root_mean_squared_error(y_val, y_pred)
+            slc, inter2c, pearsrc, pvc, stdec = linregress(y_val, pred_df["nelson"])
+            rmsc = root_mean_squared_error(y_val, pred_df["nelson"])
+            group_result = {
+                "group": group_key,
+                "r2": pearsr**2,
+                "rmse": rms,
+                "r2c": pearsrc**2,
+                "rmsec": rmsc,
+                "pv": pv,
+                "pvc": pvc,
+                "size": X_val.shape[0],
+            }
+
+            results.append(group_result)
+
+        return pd.DataFrame(results), pd.concat(predictions)
+
 
 if __name__ == "__main__":
     model = DeadFuelMoistureModel()
-    model.train_model()
-    # model.save_model("model_onehot_dead.onnx")
+
+    re, preds = model.validation_per_location()
+    # model.train_model()
+    # model.save_model("dead_full.onnx")
     # model.test_saved_model("model_onehot_dead.onnx")
