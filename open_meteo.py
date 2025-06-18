@@ -1,8 +1,24 @@
-import openmeteo_requests
+import math
 
+import requests
+import openmeteo_requests
 import requests_cache
+
 import pandas as pd
 from retry_requests import retry
+
+
+def get_elevation(lat, lon):
+    """Query Open-Meteo Elevation API for a single point."""
+    url = f"https://api.open-meteo.com/v1/elevation?latitude={lat}&longitude={lon}"
+    response = requests.get(url)
+    if response.ok:
+        data = response.json()
+        return data["elevation"][0]
+    else:
+        raise Exception(
+            f"Failed to get elevation for ({lat}, {lon}): {response.status_code}"
+        )
 
 
 def fetch_hourly(
@@ -157,3 +173,7 @@ def fetch_vpd_hist(lat, lon, start_date, end_date):
 
     hourly_dataframe = pd.DataFrame(data=hourly_data)
     return hourly_dataframe
+
+
+if __name__ == "__main__":
+    pass

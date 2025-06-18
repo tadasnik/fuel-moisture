@@ -3,6 +3,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 import onnxruntime as rt
+
 from dead_fuel_moisture_model import DeadFuelMoistureModel
 from live_fuel_moisture_model import FuelMoistureModel
 
@@ -57,6 +58,7 @@ def predict_site_dead_fuel_moisture(model, site, fuel):
 def predict_site_fuel_moisture(model, site, fuel):
     fets = pd.read_parquet("data/weather_site_features.parquet")
 
+    fets["year"] = fets.date.dt.year
     fets["month"] = fets.date.dt.month
     fets["doy"] = fets.date.dt.dayofyear
 
@@ -64,44 +66,52 @@ def predict_site_fuel_moisture(model, site, fuel):
 
     test = add_fuel_columns(test, model)
     test[fuel] = 1.0
-    features = (
-        test[model.live_features_dict.keys()]
-        .copy()
-        .astype({k: v["type"] for k, v in model.live_features_dict.items()})
-    )
+    # features = (
+    #     test[model.live_features_dict.keys()]
+    #     .copy()
+    #     .astype({k: v["type"] for k, v in model.live_features_dict.items()})
+    # )
 
-    sess = rt.InferenceSession(
-        "live_full_ddur.onnx", providers=["CPUExecutionProvider"]
-    )
-    pred_ort = sess.run(None, {"X": features.values.astype(np.float32)})[0]
-    test["pred"] = pred_ort
+    # sess = rt.InferenceSession(
+    #     "live_full_ddur.onnx", providers=["CPUExecutionProvider"]
+    # )
+    # pred_ort = sess.run(None, {"X": features.values.astype(np.float32)})[0]
+    test["pred"] = model.predict(test)
+    print(test.columns)
     # Predict training dataset fuel moisture using the model
     dfr = model.prepare_training_dataset()
-    features_dfr = (
-        dfr[model.live_features_dict.keys()]
-        .copy()
-        .astype({k: v["type"] for k, v in model.live_features_dict.items()})
-    )
-
-    pred_ort_dfr = sess.run(None, {"X": features_dfr.values.astype(np.float32)})[0]
-    dfr["pred"] = pred_ort_dfr
+    # features_dfr = (
+    #     dfr[model.live_features_dict.keys()]
+    #     .copy()
+    #     .astype({k: v["type"] for k, v in model.live_features_dict.items()})
+    # )
+    #
+    # pred_ort_dfr = sess.run(None, {"X": features_dfr.values.astype(np.float32)})[0]
+    dfr["pred"] = model.predict(dfr)
 
     return test, dfr
 
 
-def plot_predictions_for_site_fuel(site, fuel):
+def plot_predictions_for_site_fuel(site, fuel, var):
     fig = plt.figure(figsize=(12, 6))
     ax = fig.add_subplot(111)
+    ax2 = ax.twinx()
     preds, dfr = predict_site_fuel_moisture(model, site, fuel)
-    sel = dfr[(dfr.site == site) & (dfr[fuel] == 1.0)].copy()
+    sel = dfr[(dfr[fuel] == 1.0)].copy()
+    selsite = dfr[(dfr[fuel] == 1.0) & (dfr.site == site)].copy()
     sns.lineplot(x="date", y="pred", data=preds, label="Prediction", color="0.5", ax=ax)
     # sns.scatterplot(x="date", y="pred", data=sel, color="green", label="Predicted FMC")
-    sns.scatterplot(x="date", y="fmc_%", data=sel, color="red", label="Measured FMC")
+    sns.scatterplot(
+        x="date", y="fmc_%", data=sel, color="orange", label="Measured FMC", ax=ax
+    )
+    sns.scatterplot(
+        x="date", y="fmc_%", data=selsite, color="red", label="Measured FMC", ax=ax
+    )
+
+    sns.lineplot(x="date", y=var, data=preds, color="green", alpha=0.5, ax=ax2)
     plt.title(
         f"Live Fuel Moisture Predictions for {site} - {fuel.replace('_', ' ').title()}"
     )
-    plt.xlabel(" ")
-    plt.ylabel("Fuel Moisture Content (%)")
     plt.legend()
     # plt.savefig(f"figures/{site}_live_{fuel}.png", dpi=300, bbox_inches="tight")
     plt.show()
@@ -169,9 +179,14 @@ def plot_july_dead():
 
 if __name__ == "__main__":
     model = FuelMoistureModel()
+    # model.validation_train_model()
+    model.train_model()
     # model = DeadFuelMoistureModel()
-    fuel = "fuel_Heather"  # Change this to the desired fuel type
-    site = "Cobham Common H15"
-    plot_predictions_for_site_fuel(site, fuel)
+    fuel = "fuel_type_Heather live canopy"  # Change this to the desired fuel type
+    # site = "Cobham Common H15"
+    site = "Ockham Common H15"
+    # site = "Sugar Loaf H6"
+    var = "smm100"
+    plot_predictions_for_site_fuel(site, fuel, var)
     # plot_predictions_for_site_dead_fuel(site, fuel)
     # plot_r2_per_group()

@@ -1,10 +1,169 @@
 import time
+import math
 
 import pandas as pd
 from sklearn.model_selection import LearningCurveDisplay
 
 from grids import ERA5LandGrid
-from open_meteo import fetch_hourly, fetch_daily
+from open_meteo import fetch_hourly, fetch_daily, get_elevation
+
+
+def offset_lat_lon(lat, lon, distance_m, bearing_deg):
+    """Calculate destination point given distance and bearing (spherical)."""
+    R = 6371000  # Earth radius in meters
+    bearing = math.radians(bearing_deg)
+    lat1 = math.radians(lat)
+    lon1 = math.radians(lon)
+
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(distance_m / R)
+        + math.cos(lat1) * math.sin(distance_m / R) * math.cos(bearing)
+    )
+
+    lon2 = lon1 + math.atan2(
+        math.sin(bearing) * math.sin(distance_m / R) * math.cos(lat1),
+        math.cos(distance_m / R) - math.sin(lat1) * math.sin(lat2),
+    )
+
+    return math.degrees(lat2), math.degrees(lon2)
+
+
+def calculate_slope_aspect(e_center, e_n, e_s, e_e, e_w, distance=90):
+    """Calculate slope (degrees) and aspect (azimuth from north, degrees)."""
+    # dz/dx = (e_e - e_w) / (2 * dx)
+    # dz/dy = (e_s - e_n) / (2 * dy)  -> note: y axis points south
+    dz_dx = (e_e - e_w) / (2 * distance)
+    dz_dy = (e_s - e_n) / (2 * distance)
+
+    slope_rad = math.atan(math.sqrt(dz_dx**2 + dz_dy**2))
+    slope_deg = math.degrees(slope_rad)
+
+    aspect_rad = math.atan2(dz_dy, -dz_dx)
+    aspect_deg = math.degrees(aspect_rad)
+
+    if aspect_deg < 0:
+        aspect_deg += 360
+
+    return slope_deg, aspect_deg
+
+
+def get_elevation_slope_aspect(lat, lon):
+    # Elevation at center point
+    e_center = get_elevation(lat, lon)
+
+    # Get surrounding points at 90m distance
+    lat_n, lon_n = offset_lat_lon(lat, lon, 90, 0)
+    lat_e, lon_e = offset_lat_lon(lat, lon, 90, 90)
+    lat_s, lon_s = offset_lat_lon(lat, lon, 90, 180)
+    lat_w, lon_w = offset_lat_lon(lat, lon, 90, 270)
+
+    # Retrieve elevations
+    e_n = get_elevation(lat_n, lon_n)
+    e_e = get_elevation(lat_e, lon_e)
+    e_s = get_elevation(lat_s, lon_s)
+    e_w = get_elevation(lat_w, lon_w)
+
+    # Calculate slope and aspect
+    slope, aspect = calculate_slope_aspect(e_center, e_n, e_s, e_e, e_w)
+
+    return {
+        "elevation": e_center,
+        "slope": slope,
+        "aspect": aspect,
+    }
+
+
+def get_terrain(dfr):
+    dfrg = (
+        dfr.groupby(["site"])[["longitude", "latitude", "latind", "lonind"]]
+        .first()
+        .reset_index()
+    )
+    results = []
+    for nr, row in dfrg.iterrows():
+        terrain = get_elevation_slope_aspect(row.latitude, row.longitude)
+        terrain["site"] = row.site
+        results.append(terrain)
+    df = pd.DataFrame(results)
+    dfr = dfr.merge(df, on="site", how="left")
+    return dfr
+
+
+def proc_uob_2025():
+    df = pd.read_excel("data/spring_2025_fuelmoisture_Uob.xlsx", sheet_name="Sheet1")
+    dt = pd.to_datetime(df["date"].astype(str) + " " + df["time"].astype(str))
+    df["date"] = dt.dt.tz_localize("Europe/London").dt.tz_convert("UTC")
+    df = df.drop("time", axis=1)
+    df = df.rename(
+        {
+            "fuel moisture": "fmc_%",
+            "location": "site",
+            "lon": "longitude",
+            "lat": "latitude",
+        },
+        axis=1,
+    )
+    df["year"] = df["date"].dt.year
+    df["week"] = df["date"].dt.isocalendar().week
+    df["month"] = df["date"].dt.month
+    er5g = ERA5LandGrid()
+    xx, yy = er5g.find_point_xy(df["latitude"], df["longitude"])
+    df["latind"] = yy.astype(int)
+    df["lonind"] = xx.astype(int)
+    df = get_terrain(df)
+    weather = get_weather_features(df)
+    fe, fe_time_series = prepare_weather_features(df, weather)
+    fe.to_parquet("data/training_dataset_features_uob_2025.parquet")
+    fe_time_series.to_parquet("data/weather_site_features_uob_2025.parquet")
+
+
+def join_dorset_surrey_and_uob_2025():
+    uob = pd.read_parquet("data/training_dataset_features_uob_2025.parquet")
+    ds = pd.read_parquet("data/training_dataset_features_dorset_surrey.parquet")
+
+
+def proc_dorset_surrey():
+    """Read and prepare observed fuel moisture data for Dorset and Surrey from Claire"""
+    df = pd.read_excel(
+        "data/Dorset-Surrey_Fuel_moisture_April_25_mod.xlsx", sheet_name="Sheet1 (2)"
+    )
+
+    df = df.dropna(subset=["Time", "date"])
+    df["date_clean"] = df["date"].str.replace(r"(\d+)(st|nd|rd|th)", r"\1", regex=True)
+
+    # Combine date and time into a single string
+    df["datetime_str"] = df["date_clean"] + " " + df["Time"].astype(str)
+
+    # Step 3: Parse into datetime (assumes '25' means 2025; you can adjust that if needed)
+    df["date"] = pd.to_datetime(
+        df["datetime_str"], format="%d %B %y %H:%M:%S", utc=True
+    )
+    df["date"] = df["date"].dt.round("h")
+
+    # Optional: Drop the intermediate columns if you don't need them
+    df.drop(columns=["date_clean", "datetime_str"], inplace=True)
+    df = df.rename(
+        {
+            "long": "longitude",
+            "lat": "latitude",
+            "Fuel moisture (%)": "fmc_%",
+            "Site": "site",
+        },
+        axis=1,
+    )
+    df["year"] = df["date"].dt.year
+    df["week"] = df["date"].dt.isocalendar().week
+    df["month"] = df["date"].dt.month
+    er5g = ERA5LandGrid()
+    xx, yy = er5g.find_point_xy(df["latitude"], df["longitude"])
+    df["latind"] = yy.astype(int)
+    df["lonind"] = xx.astype(int)
+    df = get_terrain(df)
+    weather = get_weather_features(df)
+    fe, fe_time_series = prepare_weather_features(df, weather)
+    fe.to_parquet("data/training_dataset_features_dorset_surrey.parquet")
+    fe_time_series.to_parquet("data/weather_site_features_dorset_surrey.parquet")
+    return df
 
 
 def proc_fuel_moisture_meg():
@@ -135,45 +294,51 @@ def get_weather_features(dfr: pd.DataFrame) -> pd.DataFrame:
         )
         results.append(res_comb)
         time.sleep(10)
-    results.to_parquet("data/weather_results.parquet", index=False)
+    # results.to_parquet("data/weather_results.parquet", index=False)
     return pd.concat(results)
 
 
-def prepare_weather_features() -> pd.DataFrame:
-    # First generate columns with 5 hours of past vpd and gti values
-    dfr = proc_fuel_moisture_UK()
-    results = pd.read_parquet("data/weather_results.parquet")
-    results.rename(
-        {
-            "vapour_pressure_deficit": "vpd",
-            "soil_moisture_0_to_7cm_mean": "smm7",
-            "soil_moisture_7_to_28cm_mean": "smm28",
-            "soil_moisture_28_to_100cm_mean": "smm100",
-            "global_tilted_irradiance": "gti",
-            "daylight_duration": "ddur",
-            "sunshine_duration": "sdur",
-        },
-        axis=1,
-        inplace=True,
-    )
-    for hour in range(1, 6):
-        results[f"vpd-{hour}"] = results["vpd"].shift(hour)
-        results[f"gti-{hour}"] = results["gti"].shift(hour)
-    # Then, generate columns with 24 hours of past soil moisture values
-    # for hour in range(1, 25):
-    #     results[f"smm7-{hour}"] = results["smm7"].shift(hour)
-    #     results[f"smm28-{hour}"] = results["smm28"].shift(hour)
-    #     results[f"smm100-{hour}"] = results["smm100"].shift(hour)
+def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.DataFrame:
+    """prepare weather features (results) for training dataset (dfr). Return training
+    dataset with weather features merget and also hourly time series dataset"""
+    # dfr = proc_fuel_moisture_UK()
+    # results = pd.read_parquet("data/weather_results.parquet")
 
-    daily_vpd = results.groupby(results.date_)["vpd"].mean().reset_index()
-    # Step 2: Create a DataFrame of lagged daily values
-
-    for i in range(1, 16):
-        daily_vpd[f"vpd-{i}d"] = daily_vpd["vpd"].shift(i)
-
-    daily_vpd.rename(columns={"vpd": "vpd-0d"}, inplace=True)
-
-    results = results.merge(daily_vpd, on="date_", how="left")
+    temp = []
+    for site in results.site.unique():
+        ressite = results[results.site == site].copy()
+        ressite = ressite.sort_values("date")
+        ressite.rename(
+            {
+                "vapour_pressure_deficit": "vpd",
+                "soil_moisture_0_to_7cm_mean": "smm7",
+                "soil_moisture_7_to_28cm_mean": "smm28",
+                "soil_moisture_28_to_100cm_mean": "smm100",
+                "global_tilted_irradiance": "gti",
+                "daylight_duration": "ddur",
+                "sunshine_duration": "sdur",
+            },
+            axis=1,
+            inplace=True,
+        )
+        for hour in range(1, 6):
+            ressite[f"vpd-{hour}"] = ressite["vpd"].shift(hour)
+            ressite[f"gti-{hour}"] = ressite["gti"].shift(hour)
+        # Then, generate columns with 24 hours of past soil moisture values
+        # for hour in range(1, 25):
+        #     ressite[f"smm7-{hour}"] = ressite["smm7"].shift(hour)
+        #     ressite[f"smm28-{hour}"] = ressite["smm28"].shift(hour)
+        #     ressite[f"smm100-{hour}"] = ressite["smm100"].shift(hour)
+        daily_vpd = ressite.groupby(ressite.date_)[["vpd", "ddur"]].mean().reset_index()
+        # Step 2: Create a DataFrame of lagged daily values
+        for i in range(1, 16):
+            daily_vpd[f"vpd-{i}d"] = daily_vpd["vpd"].shift(i)
+        for i in range(1, 2):
+            daily_vpd[f"ddur-{i}d"] = daily_vpd["ddur"].shift(i)
+        daily_vpd.rename(columns={"vpd": "vpd-0d", "ddur": "ddur-0d"}, inplace=True)
+        ressite = ressite.merge(daily_vpd, on="date_", how="left")
+        temp.append(ressite)
+    results = pd.concat(temp)
     # Training dataset
     fe = dfr.merge(
         results.drop(
@@ -182,7 +347,7 @@ def prepare_weather_features() -> pd.DataFrame:
         on=["site", "date"],
         how="left",
     )
-    fe.to_parquet("data/training_dataset_features.parquet")
+    # fe.to_parquet("data/training_dataset_features.parquet")
     # Time Series features dataset
 
     fe_time_series = results.merge(
@@ -190,7 +355,8 @@ def prepare_weather_features() -> pd.DataFrame:
         on=["site"],
         how="left",
     )
-    fe_time_series.to_parquet("data/weather_site_features.parquet")
+    # fe_time_series.to_parquet("data/weather_site_features.parquet")
+    return fe, fe_time_series
 
 
 def get_soil_features(dfr: pd.DataFrame) -> pd.DataFrame:
@@ -357,13 +523,11 @@ def get_features(fuel_type, days):
 
 
 if __name__ == "__main__":
+    pass
+    # proc_uob_2025()
+    # proc_dorset_surrey()
     # dfr = proc_fuel_moisture_UK()
     # results = pd.read_parquet("data/weather_results.parquet")
-    # dfr = proc_fuel_moisture_UK()
+    # dfr = proc_dorset_surrey()
     # results = get_weather_features(dfr)
-    prepare_weather_features()
-    # results.to_parquet("data/weather_features.parquet")
-    # get_features("Moor grass dead", 7)
-    # get_features("Moor grass dead", 14)
-    # get_features("Moor grass dead", 30)
-    # get_features("Moor grass dead", 60)
+    fe, fe_time = prepare_weather_features(dfr, results)
