@@ -188,5 +188,7 @@ if __name__ == "__main__":
     # site = "Sugar Loaf H6"
     var = "smm100"
     plot_predictions_for_site_fuel(site, fuel, var)
+    # model_dead = DeadFuelMoistureModel()
+    # model.train()
     # plot_predictions_for_site_dead_fuel(site, fuel)
     # plot_r2_per_group()

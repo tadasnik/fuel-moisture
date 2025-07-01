@@ -241,25 +241,10 @@ def training_dataset():
     fe["month"] = fe.date.dt.month
     fe["doy"] = fe.date.dt.dayofyear
     fe["hour"] = fe.date.dt.hour
-
-    # Read features required by Nelson model
-    # weather_features_nelson = pd.read_parquet("data/weather_features_nelson.parquet")
-    # fe = fe.merge(
-    #     weather_features_nelson[["site", "date", "nelson"]],
-    #     on=["site", "date"],
-    #     how="left",
-    # )
     fe["fuel_cat"] = "other"
     for cat in ["live", "dead"]:
         fe.loc[fe["fuel_type"].str.contains(cat), "fuel_cat"] = cat
-
     fe.loc[fe["fuel_type"] == "Litter", "fuel_cat"] = "dead"
-    # live = [x for x in fe.fuel_type.unique() if "live" in x]
-    # Litter here is live fuel
-
-    # Only live fuels
-    # fed = fe[fe.fuel_type.isin(live)].copy()
-
     return fe[fe.fuel_cat == "live"].copy()
 
 

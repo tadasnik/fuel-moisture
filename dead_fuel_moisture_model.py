@@ -130,12 +130,12 @@ class DeadFuelMoistureModel:
             "gti-2": {"type": "float32", "monotonic": -1},
             "gti-3": {"type": "float32", "monotonic": -1},
             "gti-4": {"type": "float32", "monotonic": -1},
-            "smm7": {"type": "float32", "monotonic": 1},
-            "smm28": {"type": "float32", "monotonic": 1},
-            "smm100": {"type": "float32", "monotonic": 1},
-            "slope": {"type": "float32", "monotonic": 0},
-            "aspect": {"type": "float32", "monotonic": 0},
-            "elevation": {"type": "float32", "monotonic": 0},
+            # "smm7": {"type": "float32", "monotonic": 1},
+            # "smm28": {"type": "float32", "monotonic": 1},
+            # "smm100": {"type": "float32", "monotonic": 1},
+            # "slope": {"type": "float32", "monotonic": 0},
+            # "aspect": {"type": "float32", "monotonic": 0},
+            # "elevation": {"type": "float32", "monotonic": 0},
             # "month": {"type": "float32", "monotonic": 0},
         }
 

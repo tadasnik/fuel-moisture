@@ -208,12 +208,102 @@ def proc_fuel_moisture_UK():
     return dfr
 
 
+def sample_phenology_locations() -> pd.DataFrame:
+    """Sample phenology locations from the CEH Land Cover dataset and store to file"""
+    lcs = [3, 4, 7, 9, 10]
+    res = []
+    for lc in lcs:
+        df = pd.read_parquet(
+            f"/Users/tadas/modFire/fire_lc_ndvi/data/cehlc/LCD_2018_sampled_eroded_5_lc_{lc}.parquet"
+        )
+        samp = df.groupby("Region").sample(n=3).reset_index(names="fid")
+        res.append(samp)
+    results = pd.concat(res)
+    er5g = ERA5LandGrid()
+    xx, yy = er5g.find_point_xy(results["latitude"], results["longitude"])
+    results["latind"] = yy.astype(int)
+    results["lonind"] = xx.astype(int)
+    resg = (
+        results.groupby(["latind", "lonind"])[
+            ["latitude", "longitude", "fid", "Region", "lc"]
+        ]
+        .first()
+        .reset_index()
+    )
+    resg.to_parquet("data/phenology_sampled_locations.parquet")
+    return resg
+
+
+def get_phenology_features() -> pd.DataFrame:
+    """Fetch daily weather features for given points in dfr which
+    must have columns: site, latitude, longitude, latind, lonind and date"""
+    dfr = pd.read_parquet("data/phenology_sampled_locations.parquet")
+    try:
+        completed = pd.read_parquet("data/phenology_weather.parquet")
+    except FileNotFoundError:
+        completed = pd.DataFrame()
+    start_date = "2012-01-01"
+    end_date = "2024-02-18"
+    url = "https://archive-api.open-meteo.com/v1/archive"
+    weather = []
+    for nr, row in dfr.iterrows():
+        if not completed.empty:
+            if (
+                row.lonind
+                in completed.lonind.values & row.latind
+                in completed.latind.values
+            ):
+                print("yes")
+                continue
+        print("Fetching data for row", nr, row)
+        res_daily = fetch_daily(
+            url,
+            row.latitude,
+            row.longitude,
+            start_date,
+            end_date,
+            [
+                "shortwave_radiation_sum",
+                "temperature_2m_mean",
+                "temperature_2m_max",
+                "temperature_2m_min",
+                "sunshine_duration",
+                "precipitation_sum",
+            ],
+        )
+        res_daily["latind"] = row.latind
+        res_daily["lonind"] = row.lonind
+        weather.append(res_daily)
+        time.sleep(180)  # Sleep to avoid rate limiting
+        pd.concat(weather).to_parquet("data/phenology_weather.parquet")
+    return pd.concat(weather)
+
+
+def prepare_phenology_features():
+    """merges weather record with evi data"""
+    lcs = [3, 4, 7, 9, 10]
+    regions = [
+        "Northern Scotland",
+        "Eastern Scotland",
+        "Southern Scotland",
+        "North-east",
+        "North-west",
+        "Northern Ireland",
+        "South-west",
+        "South-east",
+    ]
+    for lc in lcs:
+        for region in regions:
+            ph = pd.read_parquet(
+                f"/Users/tadas/modFire/fire_lc_ndvi/data/cehlc/gee_results/VNP13A1_{region}_{lc}_sample.parquet"
+            )
+
+
 def get_weather_features(dfr: pd.DataFrame) -> pd.DataFrame:
     """Fetch historical weather for given observations in dfr which
     must have columns: site, latitude, longitude, latind, lonind and date"""
     # First fetch hourly weather variables per unique grid cell
     url = "https://archive-api.open-meteo.com/v1/archive"
-
     dfrg = (
         dfr.groupby(["site"])[
             ["longitude", "latitude", "latind", "lonind", "slope", "aspect"]
@@ -530,4 +620,4 @@ if __name__ == "__main__":
     # results = pd.read_parquet("data/weather_results.parquet")
     # dfr = proc_dorset_surrey()
     # results = get_weather_features(dfr)
-    fe, fe_time = prepare_weather_features(dfr, results)
+    # fe, fe_time = prepare_weather_features(dfr, results)
