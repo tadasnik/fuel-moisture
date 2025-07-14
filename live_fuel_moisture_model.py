@@ -18,8 +18,7 @@ from sklearn import ensemble
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import root_mean_squared_error, r2_score
 
-from process_moisture_data import proc_fuel_moisture_UK
-from nelson_moisture import nelson_fuel_moisture
+from phenology_model import PhenologyModel
 
 clim_moist = {
     "Heather": {
@@ -237,6 +236,7 @@ def testing_dataset_uob_2025():
 
 def training_dataset():
     # Read features dataset
+    # fe = pd.read_parquet("data/training_dataset_features_evi.parquet")
     fe = pd.read_parquet("data/training_dataset_features.parquet")
     fe["month"] = fe.date.dt.month
     fe["doy"] = fe.date.dt.dayofyear
@@ -262,33 +262,42 @@ class FuelMoistureModel:
         self.y_column = "fmc_%"
         self.fuels_cat_column = "fuel_type"
         self.model_params = {
-            "max_depth": 7,
             "learning_rate": 0.1,
             "min_samples_leaf": 10,
-            "max_features": 0.9,
-            "loss": "absolute_error",
+            "max_features": 1.0,
+            "loss": "squared_error",
         }
         # Dictionary of feature columns, their dtypes and monotonicity constraints
         self.live_features_dict = {
-            "smm28": {"type": "float32", "monotonic": 0},
+            "vpdmax-10max": {"type": "float32", "monotonic": -1},
+            "vpdmax-15mean": {"type": "float32", "monotonic": -1},
+            "EVI2": {"type": "float32", "monotonic": 0},
+            # "smm28": {"type": "float32", "monotonic": 0},
             "smm100": {"type": "float32", "monotonic": 0},
             # "slope": {"type": "float32", "monotonic": 0},
             # "aspect": {"type": "float32", "monotonic": 0},
             # "elevation": {"type": "float32", "monotonic": 0},
             "doy": {"type": "float32", "monotonic": 0},
-            "ddur": {"type": "float32", "monotonic": 0},
-            "ddur-1d": {"type": "float32", "monotonic": 0},
+            # "ddur": {"type": "float32", "monotonic": 0},
+            # "ddur_change": {"type": "float32", "monotonic": 0},
             # "sdur": {"type": "float32", "monotonic": 0},
         }
-        for day in range(1, 10):
-            self.live_features_dict[f"vpd-{day}d"] = {
+        # for day in range(1, 10):
+        #     self.live_features_dict[f"vpd-{day}d"] = {
+        #         "type": "float32",
+        #         "monotonic": -1,
+        #     }
+        # add types and constrains for OneHotEncoder fuel categories/columns
+        for fuel_name in self.fuels_live:
+            self.live_features_dict[self.fuels_cat_column + "_" + fuel_name] = {
                 "type": "float32",
                 "monotonic": 0,
             }
-        (
-            self.features,
-            self.y_features,
-        ) = self.prepare_features_and_types()
+
+        # (
+        #     self.features,
+        #     self.y_features,
+        # ) = self.prepare_features_and_types()
         self.model = ensemble.HistGradientBoostingRegressor(
             monotonic_cst=[
                 self.live_features_dict[k]["monotonic"]
@@ -306,7 +315,12 @@ class FuelMoistureModel:
         for fuel in self.fuels_live:
             if self.fuels_cat_column + "_" + fuel not in fuel_encoded.columns:
                 fuel_encoded[self.fuels_cat_column + "_" + fuel] = 0.0
-        dfr = dfr.join(fuel_encoded)
+
+        try:
+            dfr = dfr.join(fuel_encoded)
+        except ValueError as e:
+            print("fuel_type encoded columns exist")
+            return dfr
         # add types and constrains for OneHotEncoder fuel categories/columns
         for fuel_name in fuel_encoded.columns:
             self.live_features_dict[fuel_name] = {"type": "float32", "monotonic": 0}
@@ -333,6 +347,7 @@ class FuelMoistureModel:
 
     def prepare_training_dataset(self):
         dfr = training_dataset()
+        # dfr = pd.read_parquet("data/live_training_dataset_evi.parquet")
         dfr = self.encode_fuel_features(dfr)
         # TODO set negative fmc_% values to zero instead?
         dfr = dfr[(dfr["fmc_%"] < 300) & (dfr["fmc_%"] > 0)]
@@ -545,18 +560,26 @@ class FuelMoistureModel:
 
 
 if __name__ == "__main__":
+    # ph_model = PhenologyModel()
+
     model = FuelMoistureModel()
     # model.validation_train_model()
-    # model.train_model()
     dfr = model.prepare_training_dataset()
-    test = model.prepare_test_dataset()
+    # dfr = ph_model.predict_evi2_live_moisture(dfr)
+    # dfr.to_parquet("data/live_training_dataset_evi.parquet")
+
+    # test = model.prepare_test_dataset()
+    # sess = rt.InferenceSession("phenology_model.onnx", providers=["CPUExecutionProvider"])
+    # pred_ort = sess.run(None, {"X": model.features.values.astype(np.float32)})[0]
+
+    # model.train_model()
 
     # plot_predicted_vs_obs(dfr, model)
     # re, preds = model.validation_per_location(group_cols=["site"])
-    re, preds = model.validation_per_location_per_fuel(
-        dfr=dfr, fuel="Heather live canopy", group_cols=["site"]
-    )
-    # model.save_model("live_full_ddur.onnx")
+    # re, preds = model.validation_per_location_per_fuel(
+    #     dfr=dfr, fuel="Heather live canopy", group_cols=["site"]
+    # )
+    # model.save_model("live_full.onnx")
 # model.train_model()
 # model.save_model("model_onehot_dead.onnx")
 # preds.groupby('fuel').apply(r2_rmse).reset_index()

@@ -7,6 +7,37 @@ import onnxruntime as rt
 from dead_fuel_moisture_model import DeadFuelMoistureModel
 from live_fuel_moisture_model import FuelMoistureModel
 
+import geopandas as gpd
+from shapely.geometry import Point
+
+
+def make_map_locations(df):
+    # Sample dataframe with lat/lon points
+
+    # Convert to GeoDataFrame
+    geometry = [Point(xy) for xy in zip(df["longitude"], df["latitude"])]
+    gdf_points = gpd.GeoDataFrame(df, geometry=geometry, crs="EPSG:4326")
+
+    # Load a world map and filter for UK
+    url = "https://naturalearth.s3.amazonaws.com/10m_cultural/ne_10m_admin_0_countries.zip"
+    world = gpd.read_file(url)
+    uk = world[world["ADMIN"] == "United Kingdom"]
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(8, 10))
+    uk.plot(ax=ax, color="lightgrey", edgecolor="black")
+    gdf_points.plot(ax=ax, color="red", markersize=50)
+
+    # Improve display
+    ax.set_title("Points over UK map")
+    ax.set_xlim(-10, 2)  # UK longitude bounds
+    ax.set_ylim(49.5, 61)  # UK latitude bounds
+    ax.set_xlabel("Longitude")
+    ax.set_ylabel("Latitude")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
 
 def add_dead_fuel_columns(dfr, model):
     fuel_columns = [x for x in model.feature_types.keys() if x.startswith("fuel_")]
@@ -56,12 +87,12 @@ def predict_site_dead_fuel_moisture(model, site, fuel):
 
 
 def predict_site_fuel_moisture(model, site, fuel):
-    fets = pd.read_parquet("data/weather_site_features.parquet")
+    fets = pd.read_parquet("data/weather_site_features_evi.parquet")
 
-    fets["year"] = fets.date.dt.year
-    fets["month"] = fets.date.dt.month
-    fets["doy"] = fets.date.dt.dayofyear
-
+    # fets["year"] = fets.date.dt.year
+    # fets["month"] = fets.date.dt.month
+    # fets["doy"] = fets.date.dt.dayofyear
+    #
     test = fets[fets.site == site].copy()
 
     test = add_fuel_columns(test, model)
@@ -109,9 +140,7 @@ def plot_predictions_for_site_fuel(site, fuel, var):
     )
 
     sns.lineplot(x="date", y=var, data=preds, color="green", alpha=0.5, ax=ax2)
-    plt.title(
-        f"Live Fuel Moisture Predictions for {site} - {fuel.replace('_', ' ').title()}"
-    )
+    plt.title(f"LFM for {site} - {fuel.replace('_', ' ').title()}")
     plt.legend()
     # plt.savefig(f"figures/{site}_live_{fuel}.png", dpi=300, bbox_inches="tight")
     plt.show()
@@ -177,6 +206,20 @@ def plot_july_dead():
     plt.show()
 
 
+def plot_phenology_weather():
+    sampled = pd.read_parquet("data/phenology_sampled_locations.parquet")
+    weather = pd.read_parquet("data/phenology_weather.parquet")
+    lc = 4
+    region = "South-west"
+    ph = pd.read_parquet(
+        f"/Users/tadas/modFire/fire_lc_ndvi/data/cehlc/gee_results/VNP13A1_{region}_{lc}_sample.parquet"
+    )
+    samp_sub = sampled[(sampled.lc == lc) & (sampled.Region == region)]
+    weather_sub = weather[
+        weather.lonind.isin(samp_sub.lonind) & weather.latind.isin(samp_sub.latind)
+    ].copy()
+
+
 if __name__ == "__main__":
     model = FuelMoistureModel()
     # model.validation_train_model()
@@ -186,7 +229,7 @@ if __name__ == "__main__":
     # site = "Cobham Common H15"
     site = "Ockham Common H15"
     # site = "Sugar Loaf H6"
-    var = "smm100"
+    var = "EVI2"
     plot_predictions_for_site_fuel(site, fuel, var)
     # model_dead = DeadFuelMoistureModel()
     # model.train()
