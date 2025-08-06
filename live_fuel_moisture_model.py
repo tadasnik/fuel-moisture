@@ -282,11 +282,6 @@ class FuelMoistureModel:
             # "ddur_change": {"type": "float32", "monotonic": 0},
             # "sdur": {"type": "float32", "monotonic": 0},
         }
-        # for day in range(1, 10):
-        #     self.live_features_dict[f"vpd-{day}d"] = {
-        #         "type": "float32",
-        #         "monotonic": -1,
-        #     }
         # add types and constrains for OneHotEncoder fuel categories/columns
         for fuel_name in self.fuels_live:
             self.live_features_dict[self.fuels_cat_column + "_" + fuel_name] = {
@@ -294,10 +289,6 @@ class FuelMoistureModel:
                 "monotonic": 0,
             }
 
-        # (
-        #     self.features,
-        #     self.y_features,
-        # ) = self.prepare_features_and_types()
         self.model = ensemble.HistGradientBoostingRegressor(
             monotonic_cst=[
                 self.live_features_dict[k]["monotonic"]
@@ -563,7 +554,7 @@ if __name__ == "__main__":
     # ph_model = PhenologyModel()
 
     model = FuelMoistureModel()
-    # model.validation_train_model()
+    model.validation_train_model()
     dfr = model.prepare_training_dataset()
     # dfr = ph_model.predict_evi2_live_moisture(dfr)
     # dfr.to_parquet("data/live_training_dataset_evi.parquet")

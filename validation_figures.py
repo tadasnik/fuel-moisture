@@ -4,11 +4,12 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import onnxruntime as rt
 
-from dead_fuel_moisture_model import DeadFuelMoistureModel
-from live_fuel_moisture_model import FuelMoistureModel
-
 import geopandas as gpd
 from shapely.geometry import Point
+from sklearn.metrics import root_mean_squared_error, r2_score
+
+from dead_fuel_moisture_model import DeadFuelMoistureModel
+from model_base import LiveFuelMoistureModel, PhenologyModel
 
 
 def make_map_locations(df):
@@ -47,7 +48,7 @@ def add_dead_fuel_columns(dfr, model):
 
 
 def add_fuel_columns(dfr, model):
-    fuel_columns = [x for x in model.live_features_dict.keys() if x.startswith("fuel_")]
+    fuel_columns = [x for x in model.features_dict.keys() if x.startswith("fuel_")]
     for fuel in fuel_columns:
         dfr[fuel] = 0.0
     return dfr
@@ -86,17 +87,24 @@ def predict_site_dead_fuel_moisture(model, site, fuel):
     return test, dfr
 
 
-def predict_site_fuel_moisture(model, site, fuel):
-    fets = pd.read_parquet("data/weather_site_features_evi.parquet")
+def predict_site_fuel_moisture(site, fuel):
+    model = LiveFuelMoistureModel(
+        pickled_model_fname="lfmc_model.onnx", phenology_model="ph_model.onnx"
+    )
+    ph_model = PhenologyModel(pickled_model_fname="ph_model.onnx")
 
-    # fets["year"] = fets.date.dt.year
-    # fets["month"] = fets.date.dt.month
-    # fets["doy"] = fets.date.dt.dayofyear
-    #
+    dfr = model.prepare_training_dataset(
+        fname="data/training_dataset_features_full.parquet"
+    )
+    dfr = model.predict_phenology(dfr)
+    fets = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
+
     test = fets[fets.site == site].copy()
-
+    test["fuel_type"] = fuel
+    test = model.predict_phenology(test)
     test = add_fuel_columns(test, model)
-    test[fuel] = 1.0
+    test["fuel_type_" + fuel] = 1.0
+
     # features = (
     #     test[model.live_features_dict.keys()]
     #     .copy()
@@ -108,9 +116,7 @@ def predict_site_fuel_moisture(model, site, fuel):
     # )
     # pred_ort = sess.run(None, {"X": features.values.astype(np.float32)})[0]
     test["pred"] = model.predict(test)
-    print(test.columns)
     # Predict training dataset fuel moisture using the model
-    dfr = model.prepare_training_dataset()
     # features_dfr = (
     #     dfr[model.live_features_dict.keys()]
     #     .copy()
@@ -118,8 +124,6 @@ def predict_site_fuel_moisture(model, site, fuel):
     # )
     #
     # pred_ort_dfr = sess.run(None, {"X": features_dfr.values.astype(np.float32)})[0]
-    dfr["pred"] = model.predict(dfr)
-
     return test, dfr
 
 
@@ -127,9 +131,9 @@ def plot_predictions_for_site_fuel(site, fuel, var):
     fig = plt.figure(figsize=(12, 6))
     ax = fig.add_subplot(111)
     ax2 = ax.twinx()
-    preds, dfr = predict_site_fuel_moisture(model, site, fuel)
-    sel = dfr[(dfr[fuel] == 1.0)].copy()
-    selsite = dfr[(dfr[fuel] == 1.0) & (dfr.site == site)].copy()
+    preds, dfr = predict_site_fuel_moisture(site, fuel)
+    sel = dfr[(dfr["fuel_type_" + fuel] == 1.0)].copy()
+    selsite = dfr[(dfr["fuel_type_" + fuel] == 1.0) & (dfr.site == site)].copy()
     sns.lineplot(x="date", y="pred", data=preds, label="Prediction", color="0.5", ax=ax)
     # sns.scatterplot(x="date", y="pred", data=sel, color="green", label="Predicted FMC")
     sns.scatterplot(
@@ -142,7 +146,7 @@ def plot_predictions_for_site_fuel(site, fuel, var):
     sns.lineplot(x="date", y=var, data=preds, color="green", alpha=0.5, ax=ax2)
     plt.title(f"LFM for {site} - {fuel.replace('_', ' ').title()}")
     plt.legend()
-    # plt.savefig(f"figures/{site}_live_{fuel}.png", dpi=300, bbox_inches="tight")
+    # plt.savefig(f"figures/new_{site}_live_{fuel}.png", dpi=300, bbox_inches="tight")
     plt.show()
 
 
@@ -220,15 +224,44 @@ def plot_phenology_weather():
     ].copy()
 
 
+def plot_training_vs_testing(model, X_train, X_test, y_train, y_test):
+    fig, axe = plt.subplots(nrows=1, ncols=1, figsize=(15, 7), sharey=True)
+    axe.scatter(
+        y_train,
+        model.predict(X_train),
+    )
+    axe.scatter(
+        y_test,
+        model.predict(X_test),
+        c="r",
+    )
+    # axes[0].set_ylim(0, 40)
+    # axes[0].set_xlim(0, 40)
+
+    mse_m = root_mean_squared_error(y_test, model.predict(X_test))
+    axe.title.set_text(
+        f"sklearn FMC R2: {np.round(model.score(X_test, y_test), 2)} MSE: {mse_m}"
+    )
+    # axes[1].scatter(y_train, model.predict(X_train), label="mono")
+    # axes[1].scatter(y_test, model.predict(X_test), label="mono test")
+    # mse_mono = mean_squared_error(y_test, model.predict(X_test))
+    # axes[1].title.set_text(
+    #     f"sklearn FMC R2: {np.round(model.score(X_test, y_test), 2)} MSE: {mse_mono}"
+    # )
+    # fig.text(0.5, 0.04, "Observed fmc", ha="center", va="center")
+    # fig.text(0.06, 0.5, "Predicted fmc", ha="center", va="center", rotation="vertical")
+    plt.show()
+
+
 if __name__ == "__main__":
-    model = FuelMoistureModel()
+    model = LiveFuelMoistureModel(pickled_model_fname="lfmc_model.onnx")
+    ph_model = PhenologyModel(pickled_model_fname="ph_model.onnx")
     # model.validation_train_model()
-    model.train_model()
     # model = DeadFuelMoistureModel()
-    fuel = "fuel_type_Heather live canopy"  # Change this to the desired fuel type
+    fuel = "Heather live canopy"  # Change this to the desired fuel type
     # site = "Cobham Common H15"
-    site = "Ockham Common H15"
-    # site = "Sugar Loaf H6"
+    # site = "Ockham Common H15"
+    site = "Sugar Loaf H6"
     var = "EVI2"
     plot_predictions_for_site_fuel(site, fuel, var)
     # model_dead = DeadFuelMoistureModel()

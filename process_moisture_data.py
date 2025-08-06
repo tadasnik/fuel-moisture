@@ -603,7 +603,9 @@ def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.Dat
         daily_vpd = ressite.groupby(ressite.date_)[daily_vars].first().reset_index()
         # Step 2: Create a DataFrame of lagged daily values
         daily_vpd = shift_weather_features(daily_vpd)
-        ressite = ressite.merge(daily_vpd, on="date_", how="left")
+        ressite = ressite.drop(daily_vars, axis=1).merge(
+            daily_vpd, on="date_", how="left"
+        )
         temp.append(ressite)
     results = pd.concat(temp)
     # Training dataset with features at observation time
@@ -736,9 +738,7 @@ def get_features(fuel_type, days):
     gti = pd.read_parquet("data/gti.parquet")
 
     # fuel_type = "Moor grass dead"
-    # dfs = dfr[dfr.fuel_type == fuel_type]
-    dfs = dfr.copy()
-    dfsg = dfs[
+    dfsg = dfr[
         [
             "fmc_%",
             "site",
@@ -752,7 +752,7 @@ def get_features(fuel_type, days):
         ]
     ].copy()
     dfsgs = []
-    for nr, row in dfsg.iterrows():
+    for _, row in dfsg.iterrows():
         # find precipitation and vpd for the site and date
         start_date = row.date - pd.Timedelta(f"{days} day")
         end_date = row.date
@@ -798,3 +798,5 @@ if __name__ == "__main__":
     # dfr = model.prepare_training_dataset()
     weather = pd.read_parquet("data/live_weather_features.parquet")
     fe, fe_time = prepare_weather_features(dfr, weather)
+    fe.to_parquet("data/training_dataset_features_full.parquet")
+    fe_time.to_parquet("data/training_dataset_features_full_time_series.parquet")
