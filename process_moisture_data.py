@@ -93,8 +93,25 @@ def get_terrain(dfr):
 
 def proc_uob_2025():
     df = pd.read_excel("data/spring_2025_fuelmoisture_Uob.xlsx", sheet_name="Sheet1")
+    # Integrate summer data from ghostplot
+    dfs = pd.read_excel("data/kinver_ghostplot_fmc.xlsx")
+    dfs = dfs.rename(
+        {"Date": "date", "Time": "time", "Fuel moisture percent": "fuel moisture"},
+        axis=1,
+    )
+    dfs["location"] = "Kinver1_England"
+    dfs["lat"] = df[df["location"] == "Kinver1_England"].lat.values[0]
+    dfs["lon"] = df[df["location"] == "Kinver1_England"].lon.values[0]
+    dfs["fuel"] = ""
+    dfs.loc[dfs.Fuel == "C", "fuel"] = "Calluna canopy"
+    dfs.loc[dfs.Fuel == "S", "fuel"] = "Calluna stem"
+    dfs.loc[dfs.Fuel == "O", "fuel"] = "Organic"
+    df = pd.concat(
+        [df, dfs[["location", "date", "time", "fuel", "fuel moisture", "lon", "lat"]]]
+    )
     dt = pd.to_datetime(df["date"].astype(str) + " " + df["time"].astype(str))
     df["date"] = dt.dt.tz_localize("Europe/London").dt.tz_convert("UTC")
+    df["date"] = df["date"].dt.round("h")
     df = df.drop("time", axis=1)
     df = df.rename(
         {
@@ -113,15 +130,22 @@ def proc_uob_2025():
     df["latind"] = yy.astype(int)
     df["lonind"] = xx.astype(int)
     df = get_terrain(df)
-    weather = get_weather_features(df)
+    weather = get_weather_features(df, "data/weather_features_uob_2025.parquet")
     fe, fe_time_series = prepare_weather_features(df, weather)
     fe.to_parquet("data/training_dataset_features_uob_2025.parquet")
     fe_time_series.to_parquet("data/weather_site_features_uob_2025.parquet")
 
 
-def join_dorset_surrey_and_uob_2025():
+def join_dorset_surrey_and_uob_2025(fuel_type="Heather_live_canopy"):
     uob = pd.read_parquet("data/training_dataset_features_uob_2025.parquet")
     ds = pd.read_parquet("data/training_dataset_features_dorset_surrey.parquet")
+    if fuel_type == "Heather_live_canopy":
+        uobs = uob[(uob.fuel == "Calluna canopy")]
+        dss = ds[(ds.Plant == "Calluna") & (ds.Component == "tips")]
+    oub_mapping = {
+        "Calluna canopy": "Heather live canopy",
+        "Calluna stem": "Heather live stem",
+    }
 
 
 def proc_dorset_surrey():
@@ -161,7 +185,7 @@ def proc_dorset_surrey():
     df["latind"] = yy.astype(int)
     df["lonind"] = xx.astype(int)
     df = get_terrain(df)
-    weather = get_weather_features(df)
+    weather = get_weather_features(df, "data/weather_features_dorset_surrey.parquet")
     fe, fe_time_series = prepare_weather_features(df, weather)
     fe.to_parquet("data/training_dataset_features_dorset_surrey.parquet")
     fe_time_series.to_parquet("data/weather_site_features_dorset_surrey.parquet")
@@ -344,8 +368,8 @@ def prepare_phenology_features():
             "temperature_2m_mean": "tmean",
             "temperature_2m_max": "tmax",
             "temperature_2m_min": "tmin",
-            "sunshine_duration": "sdur",
-            "precipitation_sum": "prec",
+            # "sunshine_duration": "sdur",
+            # "precipitation_sum": "prec",
             "soil_moisture_7_to_28cm_mean": "smm28",
             "soil_moisture_28_to_100cm_mean": "smm100",
             "daylight_duration": "ddur",
@@ -409,20 +433,10 @@ def prepare_phenology_features():
 
 def shift_weather_features(dfr: pd.DataFrame) -> pd.DataFrame:
     dfrs = {}
-    vars = ["sri", "tmean", "sdur", "prec", "vpdmax", "ddur"]
+    vars = ["sri", "tmean", "vpdmax", "ddur"]
     for day in range(1, 16):
         for var in vars:
             dfrs[f"{var}-{day}"] = dfr[var].shift(day).values
-        # dfr[f"sri-{day}"] = dfr["sri"].shift(day)
-        # dfr[f"tmean-{day}"] = dfr["tmean"].shift(day)
-        # dfr[f"tmax-{day}"] = dfr["tmax"].shift(day)
-        # dfr[f"tmin-{day}"] = dfr["tmin"].shift(day)
-        # dfr[f"sdur-{day}"] = dfr["sdur"].shift(day)
-        # dfr[f"prec-{day}"] = dfr["prec"].shift(day)
-        # dfr[f"vpdmax-{day}"] = dfr["vpdmax"].shift(day)
-        # dfr[f"smm28-{day}"] = dfr["smm28"].shift(day)
-        # dfr[f"smm100-{day}"] = dfr["smm100"].shift(day)
-        # dfr[f"ddur-{day}"] = dfr["ddur"].shift(day)
     # compute mean values
     shifted = pd.DataFrame.from_dict(dfrs, orient="columns")
     ress = {}
@@ -468,15 +482,23 @@ def get_weather_features(dfr: pd.DataFrame, completed_fname: str) -> pd.DataFram
         .reset_index()
     )
     hourly_variables = [
-        "temperature_2m",
-        "relative_humidity_2m",
-        "precipitation",
-        "cloud_cover",
-        "wind_speed_10m",
-        "wind_direction_10m",
-        "wind_gusts_10m",
+        # "temperature_2m",
+        # "relative_humidity_2m",
+        # "precipitation",
+        # "cloud_cover",
+        # "wind_speed_10m",
+        # "wind_direction_10m",
+        # "wind_gusts_10m",
         "vapour_pressure_deficit",
         "global_tilted_irradiance",
+    ]
+    daily_variables = [
+        "temperature_2m_mean",
+        "shortwave_radiation_sum",
+        "daylight_duration",
+        "vapour_pressure_deficit_max",
+        "soil_moisture_7_to_28cm_mean",
+        "soil_moisture_28_to_100cm_mean",
     ]
     results = []
     for nr, row in dfrg.iterrows():
@@ -492,8 +514,13 @@ def get_weather_features(dfr: pd.DataFrame, completed_fname: str) -> pd.DataFram
         maxdate = dfr.loc[
             (dfr.latind == row.latind) & (dfr.lonind == row.lonind), "date"
         ].max()
-        start_date = (mindate - pd.DateOffset(months=1)).strftime("%Y-%m-%d")
-        end_date = (maxdate + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        # Add a month before the first date to ensure we have enough data
+        # start_date = (mindate - pd.DateOffset(months=1)).strftime("%Y-%m-%d")
+        # start from January of the first year
+        start_date = f"{mindate.year}-01-01"
+        print("Start date:", start_date)
+        # end_date = (maxdate + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        end_date = f"{maxdate.year}-08-01"
 
         opt_params = {
             "tilt": row.slope,
@@ -516,17 +543,7 @@ def get_weather_features(dfr: pd.DataFrame, completed_fname: str) -> pd.DataFram
             row.longitude,
             start_date,
             end_date,
-            [
-                "temperature_2m_mean",
-                "shortwave_radiation_sum",
-                "sunshine_duration",
-                "precipitation_sum",
-                "daylight_duration",
-                "vapour_pressure_deficit_max",
-                "soil_moisture_0_to_7cm_mean",
-                "soil_moisture_7_to_28cm_mean",
-                "soil_moisture_28_to_100cm_mean",
-            ],
+            daily_variables,
         )
         res_comb = pd.concat([res, pd.DataFrame(row).T.reset_index(drop=True)], axis=1)
         res_comb = res_comb.ffill()
@@ -534,32 +551,55 @@ def get_weather_features(dfr: pd.DataFrame, completed_fname: str) -> pd.DataFram
 
         res_daily["date_"] = res_daily.date.dt.floor("d")
         res_comb = res_comb.merge(
-            res_daily[
-                [
-                    "date_",
-                    "temperature_2m_mean",
-                    "shortwave_radiation_sum",
-                    "sunshine_duration",
-                    "precipitation_sum",
-                    "daylight_duration",
-                    "vapour_pressure_deficit_max",
-                    "soil_moisture_0_to_7cm_mean",
-                    "soil_moisture_7_to_28cm_mean",
-                    "soil_moisture_28_to_100cm_mean",
-                ]
-            ],
+            res_daily[["date_"] + daily_variables],
             on=["date_"],
             how="left",
         )
         results.append(res_comb)
-        time.sleep(10)
+        time.sleep(2)
         # results.to_parquet("data/weather_results.parquet", index=False)
     if len(results) == 0:
         print("No results fetched, the record is already completed.")
-        return
+        return pd.DataFrame()
     completed = pd.concat([completed, pd.concat(results)], ignore_index=True)
-    completed.to_parquet("data/live_weather_features.parquet")
+    completed.to_parquet(completed_fname, index=False)
     return pd.concat(results)
+
+
+def shift_soil_moisture(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.DataFrame:
+    """helper method to shift soil moisture features and calc mean for 15days"""
+    temp = []
+    dfrs = {}
+    vars = ["smm100", "smm28"]
+    for site in results.site.unique():
+        print(site)
+        ressite = results[results.site == site].copy()
+        daily = ressite.groupby(ressite.date_)[vars].first().reset_index()
+
+        for day in range(1, 16):
+            for var in vars:
+                dfrs[f"{var}-{day}"] = daily[var].shift(day).values
+        # compute mean values
+        shifted = pd.DataFrame.from_dict(dfrs, orient="columns")
+
+        ress = {}
+        for var in vars:
+            for days in [15]:
+                ress[f"{var}-{days}mean"] = shifted[
+                    [f"{var}-{i}" for i in range(1, days)]
+                ].mean(axis=1)
+        means = pd.DataFrame.from_dict(ress, orient="columns")
+        means["date_"] = daily.date_
+        ressite = ressite.merge(means, on="date_", how="left")
+        temp.append(ressite)
+    results = pd.concat(temp)
+
+    fe = dfr.merge(
+        results[["site", "date", "smm100-15mean", "smm28-15mean"]],
+        on=["site", "date"],
+        how="left",
+    )
+    return fe, results
 
 
 def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.DataFrame:
@@ -572,13 +612,13 @@ def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.Dat
         ressite.rename(
             {
                 "vapour_pressure_deficit": "vpd",
-                "soil_moisture_0_to_7cm_mean": "smm7",
+                # "soil_moisture_0_to_7cm_mean": "smm7",
                 "soil_moisture_7_to_28cm_mean": "smm28",
                 "soil_moisture_28_to_100cm_mean": "smm100",
                 "global_tilted_irradiance": "gti",
                 "daylight_duration": "ddur",
-                "sunshine_duration": "sdur",
-                "precipitation_sum": "prec",
+                # "sunshine_duration": "sdur",
+                # "precipitation_sum": "prec",
                 "temperature_2m_mean": "tmean",
                 "shortwave_radiation_sum": "sri",
                 "vapour_pressure_deficit_max": "vpdmax",
@@ -593,12 +633,12 @@ def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.Dat
             "tmean",
             "vpdmax",
             "ddur",
-            "smm7",
+            # "smm7",
             "smm28",
             "smm100",
             "sri",
-            "sdur",
-            "prec",
+            # "sdur",
+            # "prec",
         ]
         daily_vpd = ressite.groupby(ressite.date_)[daily_vars].first().reset_index()
         # Step 2: Create a DataFrame of lagged daily values
@@ -607,6 +647,7 @@ def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.Dat
             daily_vpd, on="date_", how="left"
         )
         temp.append(ressite)
+        print(ressite.ddur.unique(), site)
     results = pd.concat(temp)
     # Training dataset with features at observation time
     fe = dfr.merge(
@@ -787,16 +828,38 @@ def get_features(fuel_type, days):
 
 
 if __name__ == "__main__":
+    pass
+    # dfr = pd.read_parquet("data/training_dataset_features_full.parquet")
+    # dfrts = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
+    # dfr, dfrts = shift_soil_moisture(dfr, dfrts)
+    # dfr.to_parquet("data/training_dataset_features_full_sm.parquet", index=False)
+    # dfrts.to_parquet(
+    #     "data/training_dataset_features_full_time_series_sm.parquet", index=False
+    # )
+    # uob = pd.read_parquet("data/training_dataset_features_uob_2025.parquet")
+    # uobt = pd.read_parquet("data/weather_site_features_uob_2025.parquet")
+    # uob, uobt = shift_soil_moisture(uob, uobt)
+    # uob.to_parquet("data/training_dataset_features_uob_2025_sm.parquet")
+    # uobt.to_parquet("data/weather_site_features_uob_2025_sm.parquet")
+    #
+    # ds = pd.read_parquet("data/training_dataset_features_dorset_surrey.parquet")
+    # dsst = pd.read_parquet("data/weather_site_features_dorset_surrey.parquet")
+    # ds, dsst = shift_soil_moisture(ds, dsst)
+    # ds.to_parquet("data/training_dataset_features_dorset_surrey_sm.parquet")
+    # dsst.to_parquet("data/weather_site_features_dorset_surrey_sm.parquet")
+
     # pass
     # proc_uob_2025()
     # proc_dorset_surrey()
-    dfr = proc_fuel_moisture_UK()
+    # dfr = proc_fuel_moisture_UK()
     # results = pd.read_parquet("data/weather_results.parquet")
     # dfr = proc_dorset_surrey()
+    # dfr = proc_uob_2025()
     # results = get_weather_features(dfr, "data/live_weather_features.parquet")
     # model = FuelMoistureModel()
     # dfr = model.prepare_training_dataset()
-    weather = pd.read_parquet("data/live_weather_features.parquet")
-    fe, fe_time = prepare_weather_features(dfr, weather)
-    fe.to_parquet("data/training_dataset_features_full.parquet")
-    fe_time.to_parquet("data/training_dataset_features_full_time_series.parquet")
+    #
+    # weather = pd.read_parquet("data/live_weather_features.parquet")
+    # fe, fe_time = prepare_weather_features(dfr, weather)
+    # fe.to_parquet("data/training_dataset_features_full.parquet")
+    # fe_time.to_parquet("data/training_dataset_features_full_time_series.parquet")

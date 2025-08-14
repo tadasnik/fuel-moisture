@@ -4,28 +4,26 @@ import pandas as pd
 import numpy as np
 from sklearn import ensemble
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, QuantileTransformer
 import onnxruntime as rt
 from skl2onnx import to_onnx
 from sklearn.base import clone
 from scipy.stats import linregress
 from sklearn.metrics import root_mean_squared_error, r2_score
 
-# from validation_figures import plot_training_vs_testing
+from validation_figures import plot_training_vs_testing
 
 
-def climatology_actual(dfr: pd.DataFrame) -> pd.DataFrame:
-    cli = dfr.groupby(["month", "fuel_type"])["fmc_%"].mean().reset_index()
-    cli.rename(columns={"fmc_%": "clim"}, inplace=True)
-    dfr = dfr.merge(cli, on=["month", "fuel_type"], how="left")
-    return dfr
-
-
-def climatology_test(dfr: pd.DataFrame, test: pd.DataFrame) -> pd.DataFrame:
-    cli = dfr.groupby(["month", "fuel_type"])["fmc_%"].mean().reset_index()
-    print("climatology_test", cli)
-    cli.rename(columns={"fmc_%": "clim"}, inplace=True)
-    test = test.merge(cli, on=["month", "fuel_type"], how="left")
+def climatology_test(
+    dfr: pd.DataFrame, test: pd.DataFrame, prediction_column: str, fuels_cat_column: str
+) -> pd.DataFrame:
+    """returns climatological monthly average fmc prediction
+    for the test dataset, based on values in dfr"""
+    cli = (
+        dfr.groupby(["month", fuels_cat_column])[prediction_column].mean().reset_index()
+    )
+    cli.rename(columns={prediction_column: "clim"}, inplace=True)
+    test = test.merge(cli, on=["month", fuels_cat_column], how="left")
     return test
 
 
@@ -56,6 +54,7 @@ class BaseModel:
             "learning_rate": 0.1,
             "min_samples_leaf": 10,
             "max_features": 1.0,
+            "quantile": 0.5,
             "loss": "absolute_error",
         }
 
@@ -135,6 +134,70 @@ class BaseModel:
         with open(file_name, "wb") as f:
             f.write(onx.SerializeToString())
 
+    def validation_per_fuel_location(
+        self, dfr, fuel, group_cols: List[str] = ["lonind", "latind"]
+    ):
+        """
+        Perform spatial cross-validation using unique (lonind, latind) groups.
+
+        Parameters:
+            group_cols (list): Columns used for grouping (default ['lonind', 'latind']).
+
+        Returns:
+            results (pd.DataFrame): Per-group scores.
+            all_predictions (pd.DataFrame): DataFrame with true/predicted values for each group.
+        """
+        results = []
+        predictions = []
+        grouped = dfr.groupby(group_cols)
+        print("features", self.features_dict.keys())
+        for group_key, val_df in grouped:
+            if val_df[val_df[self.fuels_cat_column] == fuel].shape[0] < 20:
+                continue  # Skip groups with too few samples
+            else:
+                print(
+                    "proc group",
+                    group_key,
+                    "size",
+                    val_df[val_df[self.fuels_cat_column] == fuel].shape,
+                )
+            pred_df = val_df[val_df[self.fuels_cat_column] == fuel].copy()
+            train_df = dfr.loc[~dfr.index.isin(val_df.index)]
+            X_train = train_df[self.features_dict.keys()]
+            y_train = train_df[self.y_column]
+            X_val = pred_df[self.features_dict.keys()]
+            y_val = pred_df[self.y_column]
+            model_copy = clone(self.model)
+            model_copy.fit(X_train, y_train)
+            y_pred = model_copy.predict(X_val)
+            pred_df["prediction"] = y_pred
+            pred_df = climatology_test(
+                train_df, pred_df, self.y_column, self.fuels_cat_column
+            )
+            for i, col in enumerate(group_cols):
+                pred_df[col] = group_key[i]
+            predictions.append(pred_df)
+            sl, inter, pearsr, pv, stde = linregress(y_val, y_pred)
+            rms = root_mean_squared_error(y_val, y_pred)
+            slc, inter2c, pearsrc, pvc, stdec = linregress(
+                pred_df[self.y_column], pred_df["clim"]
+            )
+
+            pred_df = pred_df.dropna()
+            rmsc = root_mean_squared_error(pred_df[self.y_column], pred_df["clim"])
+            group_result = {
+                "group": group_key,
+                "r2": pearsr**2,
+                "rmse": rms,
+                "r2c": pearsrc**2,
+                "rmsec": rmsc,
+                "pv": pv,
+                "pvc": pvc,
+                "size": X_val.shape[0],
+            }
+            results.append(group_result)
+        return pd.DataFrame(results), pd.concat(predictions)
+
 
 class PhenologyModel(BaseModel):
     def __init__(self, pickled_model_fname=None):
@@ -152,30 +215,49 @@ class PhenologyModel(BaseModel):
         fuel_names = [3, 4, 7, 9, 10]
         super().__init__(
             fuel_names=fuel_names,
-            y_column="EVI2",
+            y_column="ph",
             fuels_cat_column="lc",
             model_params=None,
             base_features=base_features,
             pickled_model_fname=pickled_model_fname,
         )
 
+    def transform_evi2_to_phenology(self, dfr: pd.DataFrame) -> pd.Series:
+        """Map EVI2 values to phenological phase; [0, 1]."""
+        dfrs = []
+        grouped = dfr.groupby(["latind", "lonind", "lc"])
+        qt = QuantileTransformer(n_quantiles=100, random_state=42)
+        for group_key, group in grouped:
+            qt = QuantileTransformer(n_quantiles=100, random_state=42)
+            ph = qt.fit_transform(group.EVI2.values.reshape(-1, 1))
+            dfrs.append(group.assign(ph=ph.flatten()))
+        return pd.concat(dfrs)
+
     def prepare_training_dataset(self, fname: str):
         dfr = super().prepare_training_dataset(fname)
         # Add phenology specific features
         dfr = dfr[dfr.smm100 > 0.01].copy()
-        dfr = dfr[dfr.EVI2 > 0].copy()
+        dfr["month"] = dfr["date"].dt.month
+        # dfr = dfr[dfr[self.y_column] > 0].copy()
         return dfr
 
 
 class LiveFuelMoistureModel(BaseModel):
     def __init__(self, pickled_model_fname=None, phenology_model=None):
         base_features = {
-            "vpdmax-7max": {"type": "float32", "monotonic": -1},
-            "vpdmax-15max": {"type": "float32", "monotonic": -1},
-            "vpdmax-7mean": {"type": "float32", "monotonic": -1},
+            # "vpdmax-7max": {"type": "float32", "monotonic": -1},
+            # "vpdmax-15max": {"type": "float32", "monotonic": -1},
+            "vpd": {"type": "float32", "monotonic": 0},
+            # "vpdmax-3mean": {"type": "float32", "monotonic": -1},
+            # "vpdmax-7mean": {"type": "float32", "monotonic": -1},
             "vpdmax-15mean": {"type": "float32", "monotonic": -1},
-            "EVI2": {"type": "float32", "monotonic": 0},
-            "smm100": {"type": "float32", "monotonic": 0},
+            "ph": {"type": "float32", "monotonic": 0},
+            # "ph": {"type": "float32", "monotonic": 0},
+            # "smm28": {"type": "float32", "monotonic": 0},
+            "smm28-15mean": {"type": "float32", "monotonic": 1},
+            # "smm28": {"type": "float32", "monotonic": 1},
+            # "smm100": {"type": "float32", "monotonic": 0},
+            "smm100-15mean": {"type": "float32", "monotonic": 1},
             # "ddur": {"type": "float32", "monotonic": 0},
             "ddur_change": {"type": "float32", "monotonic": 0},
         }
@@ -200,9 +282,9 @@ class LiveFuelMoistureModel(BaseModel):
             dfr.loc[dfr["fuel_type"].str.contains(cat), "fuel_cat"] = cat
         dfr.loc[dfr["fuel_type"] == "Litter", "fuel_cat"] = "dead"
         dfr = dfr[(dfr["fmc_%"] < 300) & (dfr["fmc_%"] > 0)].copy()
-        if "EVI2" not in dfr.columns:
+        if self.ph_model.y_column not in dfr.columns:
             dfr = self.predict_phenology(dfr)
-        dfr = dfr[dfr.EVI2 > 0].copy()
+        dfr = dfr[dfr[self.ph_model.y_column] > 0].copy()
         return dfr[dfr.fuel_cat == "live"].copy()
 
     def add_phenology_lc(self, dfr: pd.DataFrame):
@@ -220,15 +302,25 @@ class LiveFuelMoistureModel(BaseModel):
         dfr["lc"] = dfr.copy()["fuel_type"].map(fuels_live_to_phenology)
         return dfr
 
-    def predict_phenology(self, dfr: pd.DataFrame) -> pd.Series:
+    def predict_phenology(self, dfr: pd.DataFrame) -> pd.DataFrame:
         """Predict phenology EVI2 values using the PhenologyModel."""
         dfr = self.add_phenology_lc(dfr)
         dfr = self.ph_model.encode_fuel_features(dfr)
-        dfr["EVI2"] = self.ph_model.predict(dfr)
+        dfr[self.ph_model.y_column] = self.ph_model.predict(dfr)
+        return dfr
+
+    def predict_phenology_fuel_moisture(self, dfr: pd.DataFrame):
+        """
+        This wrapper method is used to predict EVI2 and then
+        predicts fuel moisture.
+        """
+        dfr = self.predict_phenology(dfr)
+        dfr = self.encode_fuel_features(dfr)
+        dfr["pred"] = self.predict(dfr)
         return dfr
 
     def validation_per_fuel_location(
-        self, fuel, group_cols: List[str] = ["lonind", "latind"]
+        self, dfr, fuel, group_cols: List[str] = ["lonind", "latind"]
     ):
         """
         Perform spatial cross-validation using unique (lonind, latind) groups.
@@ -240,11 +332,6 @@ class LiveFuelMoistureModel(BaseModel):
             results (pd.DataFrame): Per-group scores.
             all_predictions (pd.DataFrame): DataFrame with true/predicted values for each group.
         """
-        # fets = pd.read_parquet("data/weather_site_features.parquet")
-        dfr = lfmc_model.prepare_training_dataset(
-            fname="data/training_dataset_features_full.parquet"
-        )
-
         results = []
         predictions = []
         grouped = dfr.groupby(group_cols)
@@ -269,7 +356,9 @@ class LiveFuelMoistureModel(BaseModel):
             model_copy.fit(X_train, y_train)
             y_pred = model_copy.predict(X_val)
             pred_df["prediction"] = y_pred
-            pred_df = climatology_test(train_df, pred_df)
+            pred_df = climatology_test(
+                train_df, pred_df, self.y_column, self.fuels_cat_column
+            )
             for i, col in enumerate(group_cols):
                 pred_df[col] = group_key[i]
             predictions.append(pred_df)
@@ -296,22 +385,29 @@ class LiveFuelMoistureModel(BaseModel):
 
 
 if __name__ == "__main__":
-    ph_model = PhenologyModel(pickled_model_fname="ph_model.onnx")
-    # dfr = ph_model.prepare_training_dataset(
-    #     fname="data/phenology_training_dataset_features.parquet"
-    # )
-    # ph_model.train_model(dfr)
-    # ph_model.save_model("ph_model.onnx", dfr)
-    # Example usage
-    lfmc_model = LiveFuelMoistureModel()
-    dfrl = lfmc_model.prepare_training_dataset(
-        fname="data/training_dataset_features_full.parquet"
+    # ph_model = PhenologyModel(pickled_model_fname="ph_model.onnx")
+    ph_model = PhenologyModel()
+    dfr = ph_model.prepare_training_dataset(
+        fname="data/phenology_training_dataset_features.parquet"
     )
+    dfr = ph_model.transform_evi2_to_phenology(dfr)
+    res, df = ph_model.validation_per_fuel_location(dfr, 4)
+    # ph_model.validation_train_model(dfr)
+    # ph_model.train_model(dfr)
+    # ph_model.save_model("ph_model_q.onnx", dfr)
+    # Example usage
+    # lfmc_model = LiveFuelMoistureModel(phenology_model="ph_model_q.onnx")
+    # dfrl = lfmc_model.prepare_training_dataset(
+    #     fname="data/training_dataset_features_full_sm.parquet"
+    # )
     # lfmc_model.train_model(dfrl)
-    # lfmc_model.save_model("lfmc_model.onnx", dfrl)
+    # lfmc_model.save_model("lfmc_model_no_evi.onnx", dfrl)
     # lfmc_model.validation_train_model(dfrl)
     # res = lfmc_model.validation_per_location(group_cols=["site"])
-    # res, df = lfmc_model.validation_per_fuel_location("Heather live stem")
+    #
+    # res, df = lfmc_model.validation_per_fuel_location(dfrl, "Heather live stem")
+    # gres, gdf = lfmc_model.validation_per_fuel_location(dfrl, "Gorse live canopy")
+    # bres, bdf = lfmc_model.validation_per_fuel_location(dfrl, "Moor grass live")
 # lfmc = lfmc_model.predict(dfrl)
 
 # print(fuel_model.feature_columns)
