@@ -16,7 +16,7 @@ from sklearn.model_selection import train_test_split
 from sklearn import ensemble
 from sklearn.base import clone
 from sklearn.preprocessing import OneHotEncoder
-from sklearn.metrics import root_mean_squared_error
+from sklearn.metrics import root_mean_squared_error, mean_absolute_percentage_error
 
 from process_moisture_data import proc_fuel_moisture_UK
 from nelson_moisture import nelson_fuel_moisture
@@ -258,9 +258,9 @@ class DeadFuelMoistureModel:
                 pred_df[col] = group_key[i]
             predictions.append(pred_df)
             sl, inter, pearsr, pv, stde = linregress(y_val, y_pred)
-            rms = root_mean_squared_error(y_val, y_pred)
+            rms = mean_absolute_percentage_error(y_val, y_pred)
             slc, inter2c, pearsrc, pvc, stdec = linregress(y_val, pred_df["nelson"])
-            rmsc = root_mean_squared_error(y_val, pred_df["nelson"])
+            rmsc = mean_absolute_percentage_error(y_val, pred_df["nelson"])
             group_result = {
                 "group": group_key,
                 "r2": pearsr**2,

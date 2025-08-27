@@ -130,7 +130,8 @@ def proc_uob_2025():
     df["latind"] = yy.astype(int)
     df["lonind"] = xx.astype(int)
     df = get_terrain(df)
-    weather = get_weather_features(df, "data/weather_features_uob_2025.parquet")
+    get_weather_features(df, "data/weather_features_uob_2025.parquet")
+    weather = pd.read_parquet("data/weather_features_uob_2025.parquet")
     fe, fe_time_series = prepare_weather_features(df, weather)
     fe.to_parquet("data/training_dataset_features_uob_2025.parquet")
     fe_time_series.to_parquet("data/weather_site_features_uob_2025.parquet")
@@ -433,7 +434,7 @@ def prepare_phenology_features():
 
 def shift_weather_features(dfr: pd.DataFrame) -> pd.DataFrame:
     dfrs = {}
-    vars = ["sri", "tmean", "vpdmax", "ddur"]
+    vars = ["sri", "tmean", "vpdmax", "ddur", "prec", "smm100", "smm28"]
     for day in range(1, 16):
         for var in vars:
             dfrs[f"{var}-{day}"] = dfr[var].shift(day).values
@@ -441,12 +442,12 @@ def shift_weather_features(dfr: pd.DataFrame) -> pd.DataFrame:
     shifted = pd.DataFrame.from_dict(dfrs, orient="columns")
     ress = {}
     for var in vars:
-        for days in [3, 7, 10, 15]:
+        for days in [3, 7, 15]:
             if var == "prec":
                 ress[f"{var}-{days}sum"] = shifted[
                     [f"{var}-{i}" for i in range(1, days)]
                 ].sum(axis=1)
-            elif var in ["vpdmax", "tmax"]:
+            elif var in ["vpdmax", "tmax", "smm100", "smm28"]:
                 ress[f"{var}-{days}max"] = shifted[
                     [f"{var}-{i}" for i in range(1, days)]
                 ].max(axis=1)
@@ -493,6 +494,7 @@ def get_weather_features(dfr: pd.DataFrame, completed_fname: str) -> pd.DataFram
         "global_tilted_irradiance",
     ]
     daily_variables = [
+        "precipitation_sum",
         "temperature_2m_mean",
         "shortwave_radiation_sum",
         "daylight_duration",
@@ -520,7 +522,7 @@ def get_weather_features(dfr: pd.DataFrame, completed_fname: str) -> pd.DataFram
         start_date = f"{mindate.year}-01-01"
         print("Start date:", start_date)
         # end_date = (maxdate + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-        end_date = f"{maxdate.year}-08-01"
+        end_date = "2025-08-10"
 
         opt_params = {
             "tilt": row.slope,
@@ -536,7 +538,7 @@ def get_weather_features(dfr: pd.DataFrame, completed_fname: str) -> pd.DataFram
             hourly_variables,
             opt_params,
         )
-        time.sleep(1)
+        time.sleep(5)
         res_daily = fetch_daily(
             url,
             row.latitude,
@@ -555,15 +557,12 @@ def get_weather_features(dfr: pd.DataFrame, completed_fname: str) -> pd.DataFram
             on=["date_"],
             how="left",
         )
-        results.append(res_comb)
-        time.sleep(2)
+        # results.append(res_comb)
+        time.sleep(7)
         # results.to_parquet("data/weather_results.parquet", index=False)
-    if len(results) == 0:
-        print("No results fetched, the record is already completed.")
-        return pd.DataFrame()
-    completed = pd.concat([completed, pd.concat(results)], ignore_index=True)
-    completed.to_parquet(completed_fname, index=False)
-    return pd.concat(results)
+        completed = pd.concat([completed, res_comb], ignore_index=True)
+        completed.to_parquet(completed_fname, index=False)
+    # return pd.concat(results)
 
 
 def shift_soil_moisture(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.DataFrame:
@@ -618,7 +617,7 @@ def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.Dat
                 "global_tilted_irradiance": "gti",
                 "daylight_duration": "ddur",
                 # "sunshine_duration": "sdur",
-                # "precipitation_sum": "prec",
+                "precipitation_sum": "prec",
                 "temperature_2m_mean": "tmean",
                 "shortwave_radiation_sum": "sri",
                 "vapour_pressure_deficit_max": "vpdmax",
@@ -638,7 +637,7 @@ def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.Dat
             "smm100",
             "sri",
             # "sdur",
-            # "prec",
+            "prec",
         ]
         daily_vpd = ressite.groupby(ressite.date_)[daily_vars].first().reset_index()
         # Step 2: Create a DataFrame of lagged daily values
@@ -647,7 +646,6 @@ def prepare_weather_features(dfr: pd.DataFrame, results: pd.DataFrame) -> pd.Dat
             daily_vpd, on="date_", how="left"
         )
         temp.append(ressite)
-        print(ressite.ddur.unique(), site)
     results = pd.concat(temp)
     # Training dataset with features at observation time
     fe = dfr.merge(
@@ -828,7 +826,7 @@ def get_features(fuel_type, days):
 
 
 if __name__ == "__main__":
-    pass
+    # pass
     # dfr = pd.read_parquet("data/training_dataset_features_full.parquet")
     # dfrts = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
     # dfr, dfrts = shift_soil_moisture(dfr, dfrts)
@@ -849,17 +847,19 @@ if __name__ == "__main__":
     # dsst.to_parquet("data/weather_site_features_dorset_surrey_sm.parquet")
 
     # pass
-    # proc_uob_2025()
+    proc_uob_2025()
     # proc_dorset_surrey()
     # dfr = proc_fuel_moisture_UK()
     # results = pd.read_parquet("data/weather_results.parquet")
     # dfr = proc_dorset_surrey()
     # dfr = proc_uob_2025()
-    # results = get_weather_features(dfr, "data/live_weather_features.parquet")
+    # results = get_weather_features(dfr, "data/training_dataset_weather.parquet")
     # model = FuelMoistureModel()
     # dfr = model.prepare_training_dataset()
     #
-    # weather = pd.read_parquet("data/live_weather_features.parquet")
-    # fe, fe_time = prepare_weather_features(dfr, weather)
+    # results = get_weather_features(dfr, "data/training_dataset_weather.parquet")
+    # dfr = proc_fuel_moisture_UK()
+    # results = pd.read_parquet("data/training_dataset_weather.parquet")
+    # fe, fe_time = prepare_weather_features(dfr, results)
     # fe.to_parquet("data/training_dataset_features_full.parquet")
     # fe_time.to_parquet("data/training_dataset_features_full_time_series.parquet")
