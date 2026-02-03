@@ -9,8 +9,12 @@ import onnxruntime as rt
 import geopandas as gpd
 from shapely.geometry import Point
 from scipy.stats import linregress
-from sklearn.metrics import root_mean_squared_error, r2_score
-
+from sklearn.metrics import (
+    mean_absolute_error,
+    mean_absolute_percentage_error,
+    root_mean_squared_error,
+    r2_score,
+)
 from dead_fuel_moisture_model import DeadFuelMoistureModel
 from model_base import LiveFuelMoistureModel, PhenologyModel
 
@@ -101,12 +105,12 @@ def predict_site_fuel_moisture(dfr, dfrts, model, site, fuel):
     Predictions are made using the LiveFuelMoistureModel and phenology model
     using the pickled pretrained model_base
     """
-    dfr = model.predict_phenology(dfr)
+    # dfr = model.predict_phenology(dfr)
     dfrst = dfrts[dfrts.site == site].copy()
-    dfrst["fuel_type"] = fuel
-    dfrst = model.predict_phenology(dfrst)
+    dfrst["fuel"] = fuel
+    # dfrst = model.predict_phenology(dfrst)
     dfrst = add_fuel_columns(dfrst, model)
-    dfrst["fuel_type_" + fuel] = 1.0
+    dfrst["fuel" + fuel] = 1.0
     dfrst["pred"] = model.predict(dfrst)
     return dfr, dfrst
 
@@ -127,6 +131,47 @@ def plot_predictions_for_site_dead_fuel(site, fuel):
     plt.legend()
     plt.savefig(f"figures/{site}_dead_{fuel}.png", dpi=300, bbox_inches="tight")
     plt.show()
+
+
+def validation_nos_per_fuel(
+    dfr,
+    group_cols: List[str] = ["lonind", "latind"],
+    y_column="fmc_%",
+    prediction_column="pred",
+    base_column="clim",
+):
+    res = []
+    for fuel in dfr.fuel.unique():
+        grouped = dfr[dfr.fuel == fuel].groupby(group_cols)
+        for group_key, val_df in grouped:
+            if val_df.shape[0] > 10:
+                for model in [prediction_column, base_column]:
+                    rms = mean_absolute_percentage_error(
+                        val_df[y_column], val_df[model]
+                    )
+                    group_result = {
+                        "group": group_key,
+                        "mae": rms,
+                        "fuel": fuel,
+                        "model": model,
+                        "size": val_df.shape[0],
+                    }
+                    res.append(group_result)
+    return pd.DataFrame(res)
+
+
+def plot_compare_score_per_group(df, col_val, col_bench):
+    fig = plt.figure(figsize=(6, 4))
+    re = pd.read_parquet("figures/dead_r2.parquet")
+    ref = re[["group", "r2", "rmse"]].copy()
+    ref["model"] = "FireInSite"
+    ren = re[["group", "r2c", "rmsec"]].copy()
+    ren = ren.rename(columns={"r2c": "r2", "rmsec": "rmse"})
+    ren["model"] = "Simple Nelson"
+    res = pd.concat([ref, ren]).reset_index()
+    sns.catplot(data=res, x="model", y="r2", hue="index", kind="point", legend=False)
+    plt.title(f"Dead FMC validation per site")
+    plt.savefig(f"figures/r2_validation_dead.png", dpi=300, bbox_inches="tight")
 
 
 def plot_r2_per_group():
@@ -301,7 +346,7 @@ def dorset_surrey_and_uob_2025_results(fuel_type="Heather live canopy"):
 
 
 def plot_predictions_for_site_fuel(dfr, dfrts, model, site, fuel, var):
-    dfr = dfr[dfr.fuel_type == fuel].copy()
+    dfr = dfr[dfr.fuel == fuel].copy()
     lonind = dfr[dfr.site == site].lonind.unique()[0]
     latind = dfr[dfr.site == site].latind.unique()[0]
     dfrtsub = dfrts[(dfrts.lonind == lonind) & (dfrts.latind == latind)].copy()
@@ -316,7 +361,7 @@ def plot_predictions_for_site_fuel(dfr, dfrts, model, site, fuel, var):
     # sel = dfr[(dfr["fuel_type_" + fuel] == 1.0)].copy()
     # selsite = dfrsub[(dfrsub["fuel_type_" + fuel] == 1.0) & (dfr.site == site)].copy()
     sns.lineplot(
-        x="date", y="pred", data=dfrtsub, label="Predicted FMC", color="0.5", ax=ax
+        x="date", y="pred", data=dfrtsub, label="Predicted lFMC", color="0.5", ax=ax
     )
     # dfrtnotmed = dfrtnot.groupby("date")[var].mean().reset_index()
     # sns.lineplot(
@@ -327,22 +372,24 @@ def plot_predictions_for_site_fuel(dfr, dfrts, model, site, fuel, var):
         y="fmc_%",
         data=dfrnot,
         color="0.8",
-        label="Measured FMC training",
+        label="Observed lFMC training",
         ax=ax,
     )
     sns.scatterplot(
-        x="date", y="fmc_%", data=dfrsub, color="red", label="Measured FMC test", ax=ax
+        x="date", y="fmc_%", data=dfrsub, color="red", label="Observed lFMC test", ax=ax
     )
-    sns.lineplot(x="date", y=var, data=dfrtsub, color="green", alpha=0.5, ax=ax2)
-    ax.set_ylabel("FMC")
-    ax2.set_ylabel(var.replace("_", " ").title())
-    ax2.yaxis.label.set_color("green")
+    # sns.lineplot(x="date", y=var, data=dfrtsub, color="green", alpha=0.5, ax=ax2)
+    ax.set_ylabel("FMC (%)")
+    # ax2.set_ylabel(var.replace("_", " ").title())
+    # ax2.yaxis.label.set_color("green")
     # sns.lineplot(
     #     x="date", y="smm100-15mean", data=dfrtsub, color="green", alpha=0.5, ax=ax2
     # )
-    plt.title(f"lFMC for {site} - {fuel.replace('_', ' ').title()}")
+    plt.title(f"Validation of live FMC for {site} - {fuel.replace('_', ' ').title()}")
     plt.legend()
-    # plt.savefig(f"figures/new_{site}_live_{fuel}.png", dpi=300, bbox_inches="tight")
+    # plt.savefig(
+    #     f"figures/validation_{site}_live_{fuel}.png", dpi=300, bbox_inches="tight"
+    # )
     plt.show()
 
 
@@ -439,7 +486,10 @@ def plot_predictions_for_fuel_all_sites(
             ax=ax2,
         )
         # sns.lineplot(
-        #     x="date", y="prec-15sum", data=dfrtsub, alpha=0.5, dashes=True, ax=ax2
+        # sns.lineplot(
+
+        # sns.lineplot(
+        # x="date", y="prec-15sum", data=dfrtsub, alpha=0.5, dashes=True, ax=ax2
         # )
         # sns.lineplot(x="date", y="smm100", data=dfrtsub, alpha=0.5, dashes=True, ax=ax2)
 
@@ -516,6 +566,70 @@ def validation_per_fuel_location(
     return pd.DataFrame(results), pd.concat(predictions)
 
 
+def preds_vs_bench_(df, bench_col, pred_col, title):
+    fig = plt.figure(figsize=(6, 4))
+    res = validation_nos_per_fuel(df)
+    sns.violinplot(
+        data=res, x="fuel", y="mae", hue="model", split=True, gap=0.1, inner="quart"
+    )
+    sns.catplot(data=res, x="model", y="mae", hue="fuel", kind="point", legend=False)
+    plt.title(f"Dead FMC validation per site")
+    # plt.savefig(f"figures/r2_validation_dead.png", dpi=300, bbox_inches="tight")
+
+    torange = (1.0, 0.4980392156862745, 0.054901960784313725)
+    tblue = (0.12156862745098039, 0.4666666666666667, 0.7058823529411765)
+    tgreen = (0.17254901960784313, 0.6274509803921569, 0.17254901960784313)
+    tpurple = (0.5803921568627451, 0.403921568627451, 0.7411764705882353)
+    tpink = (0.8901960784313725, 0.4666666666666667, 0.7607843137254902)
+    tbrown = (0.5490196078431373, 0.33725490196078434, 0.29411764705882354)
+    tchaki = (0.7372549019607844, 0.7411764705882353, 0.13333333333333333)
+    tgrey = (0.4980392156862745, 0.4980392156862745, 0.4980392156862745)
+    tred = (0.8392156862745098, 0.15294117647058825, 0.1568627450980392)
+    fig, axe = plt.subplots(nrows=1, ncols=1, figsize=(7, 7))
+    markers = {
+        "leaves": "o",
+        "canopy": "o",
+        "stem": "^",
+        "grass": "o",
+        "Surface": "*",
+    }
+    colors = {
+        "Heather canopy": tpink,
+        "Heather stem": tpink,
+        "Gorse canopy": tgreen,
+        "Gorse stem": tgreen,
+        "Bracken leaves": torange,
+        "Bracken stem": torange,
+        "Moor grass": tbrown,
+        "Surface": tchaki,
+    }
+
+    for nr, fuel in enumerate(df.fuel.unique()):
+        dfs = df[df.fuel == fuel]
+        mark = markers.get(fuel.split()[-1], "*")
+        axe.scatter(
+            dfs["fmc_%"],
+            dfs["pred"],
+            marker=mark,
+            alpha=0.7,
+            color=colors.get(fuel, tred),
+            s=10,
+            label=fuel,
+        )
+    axe.plot([0, 62], [0, 62], color=tgrey, linestyle="--", linewidth=1)
+    axe.set_ylim(0, 62)
+    axe.set_xlim(0, 62)
+    axe.legend(markerscale=2)
+    axe.set_xlabel("Observed Dead FMC (%)")
+    axe.set_ylabel("Predicted Dead FMC (%)")
+    plt.savefig(
+        Path("figures", "dead_location_validation.png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.show()
+
+
 def dfmc_location_validation():
     df = pd.read_parquet("data/tmp/dead_location_validation.parquet")
     torange = (1.0, 0.4980392156862745, 0.054901960784313725)
@@ -565,11 +679,11 @@ def dfmc_location_validation():
     axe.legend(markerscale=2)
     axe.set_xlabel("Observed Dead FMC (%)")
     axe.set_ylabel("Predicted Dead FMC (%)")
-    plt.savefig(
-        Path("figures", "dead_location_validation.png"),
-        dpi=300,
-        bbox_inches="tight",
-    )
+    # plt.savefig(
+    #     Path("figures", "dead_location_validation.png"),
+    #     dpi=300,
+    #     bbox_inches="tight",
+    # )
     plt.show()
 
 
@@ -644,16 +758,16 @@ def lfmc_location_validation():
 
 
 if __name__ == "__main__":
-    lfmc_location_validation()
+    # lfmc_location_validation()
     # model = LiveFuelMoistureModel(
     #     pickled_model_fname="lfmc_model_no_evi.onnx", phenology_model="ph_model.onnx"
     # )
-    # model = LiveFuelMoistureModel(
-    #     phenology_ph_model="ph_model_q.onnx", phenology_phs_model="ph_model_q_phs.onnx"
-    # )
-    # dfrl = model.prepare_training_dataset(
-    #     fname="data/training_dataset_features_full.parquet"
-    # )
+    model = LiveFuelMoistureModel(
+        phenology_ph_model="ph_model_q.onnx", phenology_phs_model="ph_model_q_phs.onnx"
+    )
+    dfrl = model.prepare_training_dataset(
+        fname="data/training_dataset_features_full.parquet"
+    )
 
     # ph_model = PhenologyModel(pickled_model_fname="ph_model.onnx")
     # ph_model = PhenologyModel()
@@ -661,20 +775,22 @@ if __name__ == "__main__":
     #     fname="data/phenology_training_dataset_features.parquet"
     # )
     #
-    # uob = pd.read_parquet("data/training_dataset_features_uob_2025_sm.parquet")
-    # oub = uob.reset_index(drop=True)
+    uob = pd.read_parquet("data/training_dataset_features_uob_2025.parquet")
+    oub = uob.reset_index(drop=True)
     # ds = pd.read_parquet("data/training_dataset_features_dorset_surrey_sm.parquet")
     # dss = ds[
     #     (ds.Plant == "Calluna") & (ds.Component == "tips") & (ds["Live/dead"] == "live")
     # ].copy()
     #
-    # uob = uob[(uob.fuel == "Calluna canopy")].copy()
-    # uob["fuel_type"] = "Heather live canopy"
+    uob = uob[(uob.fuel == "Calluna canopy")].copy()
+    uob["fuel"] = "Heather canopy"
+    uob["fuel_cat"] = "live"
+    uob = model.encode_fuel_features(uob)
     # # uob = model.predict_phenology_fuel_moisture(uob)
-    # cols = list(
-    #     model.feature_columns + ["site", "fuel_type", "lonind", "latind", "fmc_%"]
-    # )
-    # dfrl_feats = pd.concat([dfrl[cols], uob[cols]], axis=0)
+    cols = list(
+        model.feature_columns + ["site", "fuel", "lonind", "latind", "date", "fmc_%"]
+    )
+    dfrl_feats = pd.concat([dfrl[cols], uob[cols]], axis=0)
     # dfrl_feats = pd.concat([dfrl, uob], ignore_index=True)
     #
     # uobt = pd.read_parquet("data/weather_site_features_uob_2025.parquet")
@@ -690,17 +806,19 @@ if __name__ == "__main__":
     # plot_predictions_for_fuel_all_sites(uob, uobt, model, "Heather live canopy")
     # plot_predictions_for_fuel_all_sites_dorset(dss, dsst, model, "Heather live canopy")
 
-    # dfrts = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
+    dfrts = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
     # plot_predicted_evi2_vs_obs_year_fuel(dfr, ph_model, 2022, 9)
 
     # model.validation_train_model()
     # model = DeadFuelMoistureModel()
-    fuel = "Heather live canopy"  # Change this to the desired fuel type
+    fuel = "Heather canopy"  # Change this to the desired fuel type
     # fuel = "Gorse live canopy"  # Change this to the desired fuel type
     # site = "Cobham Common H15"
-    # site = "Ockham Common H15"
+    site = "Ockham Common H15"
     # site = "Sugar Loaf H6"
-    site = "Thursley Common H14"
+    # site = "Thursley Common H14"
     # var = "ph"
-    var = "smm100"  # Change this to the desired variable
-    # plot_predictions_for_site_fuel(dfrl_feats, dfrts, model, site, fuel, var)
+    var = "prec-15sum"  # Change this to the desired variable
+    # plot_predictions_for_site_fuel(
+    #     dfrl, dfrts[dfrts.date < dfrl.date.max()], model, site, fuel, var
+    # )

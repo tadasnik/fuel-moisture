@@ -398,7 +398,7 @@ class LiveFuelMoistureModel(BaseModel):
         phenology_phs_model=None,
     ):
         base_features = {
-            "vpdmax-7max": {"type": "float32", "monotonic": -1},
+            # "vpdmax-7max": {"type": "float32", "monotonic": -1},
             # "vpdmax-15max": {"type": "float32", "monotonic": -1},
             # "vpd": {"type": "float32", "monotonic": 0},
             # "vpdmax-3mean": {"type": "float32", "monotonic": -1},
@@ -410,9 +410,9 @@ class LiveFuelMoistureModel(BaseModel):
             # "smm28": {"type": "float32", "monotonic": 0},
             # "smm28-15mean": {"type": "float32", "monotonic": 1},
             # "smm28": {"type": "float32", "monotonic": 0},
-            "smm100": {"type": "float32", "monotonic": 1},
-            # "prec-15sum": {"type": "float32", "monotonic": 0},
-            # "smm100-15mean": {"type": "float32", "monotonic": 1},
+            # "smm100": {"type": "float32", "monotonic": 1},
+            "prec-15sum": {"type": "float32", "monotonic": 1},
+            "smm100-15mean": {"type": "float32", "monotonic": 1},
             "ddur": {"type": "float32", "monotonic": 0},
             "ddur_change": {"type": "float32", "monotonic": 0},
         }
@@ -440,8 +440,8 @@ class LiveFuelMoistureModel(BaseModel):
         dfr = dfr[
             (dfr["fmc_%"] < 300) & (dfr["fmc_%"] > 30) & (dfr.fmc_cat == "live")
         ].copy()
-        if self.ph_model.y_column not in dfr.columns:
-            dfr = self.predict_phenology(dfr)
+        # if self.ph_model.y_column not in dfr.columns:
+        #     dfr = self.predict_phenology(dfr)
         # dfr = dfr[dfr[self.phs_model.y_column] < 0].copy()
         return dfr
 
@@ -449,15 +449,15 @@ class LiveFuelMoistureModel(BaseModel):
         """A mapping between fuel type and land cover categories for
         phenology predictions. Adds a column 'lc' to the DataFrame."""
         fuels_live_to_phenology = {
-            "Bracken live leaves": 7,
-            "Bracken live stem": 7,
-            "Gorse live canopy": 10,
-            "Gorse live stem": 10,
-            "Heather live canopy": 9,
-            "Heather live stem": 9,
-            "Moor grass live": 7,
+            "Bracken leaves": 7,
+            "Bracken stem": 7,
+            "Gorse canopy": 10,
+            "Gorse stem": 10,
+            "Heather canopy": 9,
+            "Heather stem": 9,
+            "Moor grass": 7,
         }
-        dfr["lc"] = dfr.copy()["fuel_type"].map(fuels_live_to_phenology)
+        dfr["lc"] = dfr.copy()["fuel"].map(fuels_live_to_phenology)
         return dfr
 
     def predict_phenology(self, dfr: pd.DataFrame) -> pd.DataFrame:
@@ -508,10 +508,10 @@ class DeadFuelMoistureModel(BaseModel):
 
     def prepare_training_dataset(self, fname: str):
         dfr = super().prepare_training_dataset(fname)
-        dfr["fuel_cat"] = "other"
-        for cat in ["live", "dead"]:
-            dfr.loc[dfr["fuel_type"].str.contains(cat), "fuel_cat"] = cat
-        dfr.loc[dfr["fuel_type"] == "Litter", "fuel_cat"] = "dead"
+        # dfr["fuel_cat"] = "other"
+        # for cat in ["live", "dead"]:
+        #     dfr.loc[dfr["fuel_type"].str.contains(cat), "fuel_cat"] = cat
+        # dfr.loc[dfr["fuel_type"] == "Litter", "fuel_cat"] = "dead"
         dfr = dfr[
             (dfr["fmc_%"] < 60) & (dfr["fmc_%"] > 0) & (dfr.fuel_cat == "dead")
         ].copy()
@@ -585,9 +585,10 @@ if __name__ == "__main__":
     # )
     # dfr = ph_model.transform_evi2_to_phenology(dfr)
     #
-    lfmc_model = LiveFuelMoistureModel(
-        phenology_ph_model="ph_model_q.onnx", phenology_phs_model="ph_model_q_phs.onnx"
-    )
+    # lfmc_model = LiveFuelMoistureModel(
+    #     phenology_ph_model="ph_model_q.onnx", phenology_phs_model="ph_model_q_phs.onnx"
+    # )
+    lfmc_model = LiveFuelMoistureModel()
     dfrl = lfmc_model.prepare_training_dataset(
         fname="data/training_dataset_features_full.parquet"
     )
@@ -625,39 +626,3 @@ if __name__ == "__main__":
     # lfmc_model.validation_train_model(dfrl)
     # res = lfmc_model.validation_per_location(group_cols=["site"])
     #
-#   (Bracken leaves,)  0.420618  0.317287  0.179614  0.479077   296
-# 1    (Bracken stem,)  0.395924  0.317670  0.225460  0.598477   262
-# 2    (Gorse canopy,)  0.427986  0.284281 -0.354888  0.651894   174
-# 3      (Gorse stem,)  0.425882  0.292105 -0.087038  0.760251   179
-# 4  (Heather canopy,)  0.556521  0.263892  0.288182  0.553898   347
-# 5    (Heather stem,)  0.540547  0.265305  0.291759  0.502822   361
-# 6      (Moor grass,)  0.507567  0.549805  0.173272  1.233366   162
-# 7         (Surface,)  0.357291  0.416063  0.064073  0.769700   393
-# dfs = []
-# for fuel in [
-#     "Heather live canopy",
-#     "Heather live stem",
-#     "Gorse live canopy",
-#     "Gorse live stem",
-#     "Moor grass live",
-#     "Bracken live leaves",
-#     "Bracken live stem",
-# ]:
-#     print(f"Validating {fuel}")
-#     res, df = lfmc_model.validation_per_fuel_location(dfrl, fuel)
-#     dfs.append(df)
-#     print((res.rmse - res.rmsec).sum())
-#     print(res)
-# res, df = lfmc_model.validation_per_fuel_location(dfrl, "Heather live canopy")
-# gres, gdf = lfmc_model.validation_per_fuel_location(dfrl, "Gorse live canopy")
-# bres, bdf = lfmc_model.validation_per_fuel_location(dfrl, "Moor grass live")
-
-
-# print(fuel_model.feature_columns)
-# print(fuel_model.model_params)
-#
-# phenology_model = PhenologyModel()
-# print(phenology_model.phen_features_dict)
-#
-# live_fuel_model = LiveFuelMoistureModel()
-# print(live_fuel_model.feature_columns)
