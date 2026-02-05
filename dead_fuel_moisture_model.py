@@ -19,7 +19,6 @@ from sklearn.preprocessing import OneHotEncoder
 from sklearn.metrics import root_mean_squared_error, mean_absolute_percentage_error
 
 from process_moisture_data import proc_fuel_moisture_UK
-from nelson_moisture import nelson_fuel_moisture
 
 
 def calculate_nelson_moisture(dfr):
@@ -280,7 +279,7 @@ class DeadFuelMoistureModel:
 if __name__ == "__main__":
     model = DeadFuelMoistureModel()
 
-    re, preds = model.validation_per_location()
-    # model.train_model()
+    # re, preds = model.validation_per_location()
+    model.train_model()
     # model.save_model("dead_full.onnx")
-    # model.test_saved_model("model_onehot_dead.onnx")
+    model.test_saved_model(")

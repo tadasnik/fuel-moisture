@@ -15,6 +15,7 @@ from sklearn.metrics import (
 )
 import statsmodels.api as sm
 from statsmodels.regression.rolling import RollingOLS
+
 # from validation_figures import plot_training_vs_testing
 
 
@@ -180,6 +181,12 @@ class BaseModel:
         # add types and constrains for OneHotEncoder fuel categories/columns
         # for fuel_name in fuel_encoded.columns:
         #     self.features_dict[fuel_name] = {"type": "float32", "monotonic": 0}
+        return dfr
+
+    def add_fuel_columns(self, dfr):
+        fuel_columns = [x for x in self.features_dict.keys() if x.startswith("fuel_")]
+        for fuel in fuel_columns:
+            dfr[fuel] = 0.0
         return dfr
 
     def validation_train_model(self, dfr: pd.DataFrame):
@@ -495,10 +502,10 @@ class DeadFuelMoistureModel(BaseModel):
             "gti-2": {"type": "float32", "monotonic": -1},
             "gti-3": {"type": "float32", "monotonic": -1},
             "gti-4": {"type": "float32", "monotonic": -1},
-            "vpdmax-15mean": {"type": "float32", "monotonic": -1},
-            "smm100": {"type": "float32", "monotonic": 1},
-            "ddur": {"type": "float32", "monotonic": 0},
-            "ddur_change": {"type": "float32", "monotonic": 0},
+            # "vpdmax-15mean": {"type": "float32", "monotonic": -1},
+            # "smm100": {"type": "float32", "monotonic": 1},
+            # "ddur": {"type": "float32", "monotonic": 0},
+            # "ddur_change": {"type": "float32", "monotonic": 0},
         }
 
         super().__init__(
@@ -513,7 +520,7 @@ class DeadFuelMoistureModel(BaseModel):
         #     dfr.loc[dfr["fuel_type"].str.contains(cat), "fuel_cat"] = cat
         # dfr.loc[dfr["fuel_type"] == "Litter", "fuel_cat"] = "dead"
         dfr = dfr[
-            (dfr["fmc_%"] < 60) & (dfr["fmc_%"] > 0) & (dfr.fuel_cat == "dead")
+            (dfr["fmc_%"] < 60) & (dfr["fmc_%"] > 0) & (dfr.fmc_cat == "dead")
         ].copy()
         return dfr
 
@@ -588,13 +595,13 @@ if __name__ == "__main__":
     # lfmc_model = LiveFuelMoistureModel(
     #     phenology_ph_model="ph_model_q.onnx", phenology_phs_model="ph_model_q_phs.onnx"
     # )
-    lfmc_model = LiveFuelMoistureModel()
-    dfrl = lfmc_model.prepare_training_dataset(
-        fname="data/training_dataset_features_full.parquet"
-    )
+    # lfmc_model = LiveFuelMoistureModel()
+    # dfrl = lfmc_model.prepare_training_dataset(
+    #     fname="data/training_dataset_features_full.parquet"
+    # )
     # lfmc_model.train_model(dfrl)
-    res, df = lfmc_model.validation_per_location(dfrl)
-    rr = validation_nos(df, group_cols=["fuel"])
+    # res, df = lfmc_model.validation_per_location(dfrl)
+    # rr = validation_nos(df, group_cols=["fuel"])
     #
     # uob = pd.read_parquet("data/training_dataset_features_uob_2025.parquet")
     # oub = uob.reset_index(drop=True)
@@ -602,10 +609,10 @@ if __name__ == "__main__":
     # uob["fuel_type"] = "Heather live canopy"
     # dfrl_feats = pd.concat([dfrl, uob], ignore_index=True)
     #
-    # dfmc_model = DeadFuelMoistureModel()
-    # dfr = dfmc_model.prepare_training_dataset(
-    #     fname="data/training_dataset_features_full.parquet"
-    # )
+    dfmc_model = DeadFuelMoistureModel()
+    dfr = dfmc_model.prepare_training_dataset(
+        fname="data/training_dataset_features_full.parquet"
+    )
     # dfr["lfmc"] = lfmc_model.predict(dfr)
     # dfmc_model.train_model(dfr)
     # res, df = dfmc_model.validation_per_location(dfr)

@@ -28,7 +28,7 @@ def fetch_hourly(
     start_date: str,
     end_date: str,
     variables: list[str],
-    opt_params: None | dict[str, float] = None,
+    opt_params: None | dict[str, float | str] = None,
 ) -> pd.DataFrame:
     cache_session = requests_cache.CachedSession(".cache", expire_after=-1)
     retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
