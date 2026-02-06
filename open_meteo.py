@@ -47,6 +47,7 @@ def fetch_hourly(
     # Process first location. Add a for-loop for multiple locations or weather models
     response = responses[0]
     # Process hourly data. The order of variables needs to be the same as requested.
+    utc_offset = response.UtcOffsetSeconds()
     hourly = response.Hourly()
     hourly_data = {
         "date": pd.date_range(
@@ -60,6 +61,7 @@ def fetch_hourly(
         var_dfr = hourly.Variables(nr).ValuesAsNumpy()
         hourly_data[variable] = var_dfr
     hourly_dataframe = pd.DataFrame(data=hourly_data)
+    hourly_dataframe["utc_offset"] = utc_offset
 
     return hourly_dataframe
 

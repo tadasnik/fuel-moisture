@@ -125,11 +125,14 @@ def compute_nfdrs4(dfr, lat=35, fuel_model="W", slope=5, average_ann_prec=30):
     else:
         slope_class = 3
 
+    # C to F
     dfr["Temperature(F)"] = (dfr["temperature_2m"] * 9 / 5) + 32
     dfr["RelativeHumidity(%)"] = dfr.relative_humidity_2m
+    # To inches
     dfr["Precipitation(in)"] = dfr.precipitation / 25.4
     dfr["SolarRadiation(W/m2)"] = dfr.shortwave_radiation
-    dfr["WindSpeed(mph)"] = dfr.wind_speed_10m * 3600 / 1609.344
+    # wind speed from km/h to miles/h
+    dfr["WindSpeed(mph)"] = dfr.wind_speed_10m * 0.621371
     dfr["SnowFlag"] = False
     dfr["DateTime"] = dfr.date.dt.strftime("%Y-%m-%dT%H:%M:%S")
 

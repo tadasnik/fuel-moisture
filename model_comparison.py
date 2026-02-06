@@ -7,7 +7,8 @@ import io
 
 import nfdrs4py
 import pandas as pd
-
+from nfdrs4_moisture import compute_nfdrs4
+from NG_FWI import hFWI
 from open_meteo import fetch_hourly
 from process_moisture_data import get_elevation_slope_aspect
 from nelson_moisture import nelson_fuel_moisture
@@ -87,6 +88,63 @@ def prepare_lagged_features_dead(dfr: pd.DataFrame) -> pd.DataFrame:
     return dfr
 
 
+def compute_fwi_system(dfr, lon, lat):
+    dfwi = dfr.copy()
+    fwi_columns = [
+        "id",
+        "lat",
+        "long",
+        "timezone",
+        "yr",
+        "mon",
+        "day",
+        "hr",
+        "temp",
+        "rh",
+        "ws",
+        "prec",
+        "grass_fuel_load",
+        "timestamp",
+        "date",
+    ]
+    dfwi = dfwi.rename(
+        {
+            "temperature_2m": "temp",
+            "relative_humidity_2m": "rh",
+            "wind_speed_10m": "ws",
+            "precipitation": "prec",
+            "utc_offset": "timezone",
+            "date": "timestamp",
+        },
+        axis=1,
+    )
+    dfwi["yr"] = dfwi.timestamp.dt.year
+    dfwi["mon"] = dfwi.timestamp.dt.month
+    dfwi["day"] = dfwi.timestamp.dt.day
+    dfwi["hr"] = dfwi.timestamp.dt.hour
+    dfwi["grass_fuel_load"] = 0.1
+    dfwi["id"] = 1
+    dfwi["long"] = lon
+    dfwi["lat"] = lat
+    dfwi["date"] = dfwi["timestamp"].dt.date
+    # utc_offset from seconds to hours
+    dfwi["timezone"] = (dfwi["timezone"] / 3600).astype(int)
+    fwi_hourly = hFWI(dfwi[fwi_columns])
+    fwi_hourly = fwi_hourly.drop(
+        [
+            "date",
+            "yr",
+            "mon",
+            "day",
+            "hr",
+            "id",
+        ],
+        axis=1,
+    )
+    fwi_hourly = fwi_hourly.rename({"timestamp": "date"}, axis=1)
+    return fwi_hourly
+
+
 def predict_dfmc_fireinsite(dfr):
     model = DeadFuelMoistureModel(pickled_model_fname="model_onehot_dead.onnx")
     fuel_columns = [x for x in model.features_dict.keys() if x.startswith("fuel_")]
@@ -96,6 +154,24 @@ def predict_dfmc_fireinsite(dfr):
         dfr_f[fuel] = 1
         dfr["dfmc" + fuel] = model.predict(dfr_f)
     return dfr
+
+
+def gen_data_for_site(lat, lon, start_date, end_date):
+    dfr = fetch_meteo_data(lat, lon, start_date, end_date)
+    ffeats = prepare_lagged_features_dead(dfr.copy())
+    ffeats = predict_dfmc_fireinsite(ffeats)
+    dfr["simple_fmc"] = compute_simple_nelson(dfr)
+    nfd = compute_nfdrs4(dfr)
+    nfd_fmc_cols = [x for x in nfd.columns if x.startswith("dmc_")]
+    nfd_fmc_cols += ["lmc_herb", "lmc_woody"]
+    nfd.loc[:, nfd_fmc_cols] *= 100
+    nfd_fmc_cols += ["date"]
+    fuel_columns = [x for x in ffeats.columns if x.startswith("dfmcfuel_")]
+    fuel_columns += ["date"]
+    fwi_h = compute_fwi_system(dfr, lon, lat)
+    res = dfr.merge(ffeats[fuel_columns], on="date", how="left")
+    res = res.merge(nfd[nfd_fmc_cols], on="date", how="left")
+    return res
 
 
 def uk_weather_site(site="Cobham Common H15"):
