@@ -202,7 +202,23 @@ def uk_dataset(site="Cobham Common H15"):
 
 
 if __name__ == "__main__":
-    pass
+
+    dfmc_model = DeadFuelMoistureModel()
+    dfr_d = dfmc_model.prepare_training_dataset(
+        fname="data/training_dataset_features_full.parquet"
+    )
+    dfmc_model.train_model(dfr_d)
+    site = "Cobham Common H15"
+    dfs = dfr[dfr.site == site].copy()
+    lon = dfs.longitude.iloc[0]
+    lat = dfs.latitude.iloc[0]
+    start_date = dfs.date.min().strftime("%Y-%m-%d")
+    end_date = dfs.date.max().strftime("%Y-%m-%d")
+    dfr = fetch_meteo_data(lat, lon, start_date, end_date)
+    ffeats = prepare_lagged_features_dead(dfr.copy())
+    ffeats = predict_dfmc_fireinsite(ffeats)
+
+    # pass
     # lat = 35.27618889
     # lon = -112.0632472
     # start_date = "2018-05-23"

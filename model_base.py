@@ -614,7 +614,6 @@ if __name__ == "__main__":
         fname="data/training_dataset_features_full.parquet"
     )
     # dfr["lfmc"] = lfmc_model.predict(dfr)
-    # dfmc_model.train_model(dfr)
     # res, df = dfmc_model.validation_per_location(dfr)
     # rr = validation_nos(df, group_cols=["fuel"])
     # dfr = pd.read_parquet('data/phenology_training_dataset_features_phs.parquet')
