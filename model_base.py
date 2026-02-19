@@ -595,13 +595,13 @@ if __name__ == "__main__":
     # lfmc_model = LiveFuelMoistureModel(
     #     phenology_ph_model="ph_model_q.onnx", phenology_phs_model="ph_model_q_phs.onnx"
     # )
-    # lfmc_model = LiveFuelMoistureModel()
-    # dfrl = lfmc_model.prepare_training_dataset(
-    #     fname="data/training_dataset_features_full.parquet"
-    # )
-    # lfmc_model.train_model(dfrl)
-    # res, df = lfmc_model.validation_per_location(dfrl)
-    # rr = validation_nos(df, group_cols=["fuel"])
+    lfmc_model = LiveFuelMoistureModel()
+    dfrl = lfmc_model.prepare_training_dataset(
+        fname="data/training_dataset_features_full.parquet"
+    )
+    lfmc_model.train_model(dfrl)
+    res, df = lfmc_model.validation_per_location(dfrl)
+    rr = validation_nos(df, group_cols=["fuel"])
     #
     # uob = pd.read_parquet("data/training_dataset_features_uob_2025.parquet")
     # oub = uob.reset_index(drop=True)
@@ -609,10 +609,10 @@ if __name__ == "__main__":
     # uob["fuel_type"] = "Heather live canopy"
     # dfrl_feats = pd.concat([dfrl, uob], ignore_index=True)
     #
-    dfmc_model = DeadFuelMoistureModel()
-    dfr = dfmc_model.prepare_training_dataset(
-        fname="data/training_dataset_features_full.parquet"
-    )
+    # dfmc_model = DeadFuelMoistureModel()
+    # dfr = dfmc_model.prepare_training_dataset(
+    #     fname="data/training_dataset_features_full.parquet"
+    # )
     # dfr["lfmc"] = lfmc_model.predict(dfr)
     # res, df = dfmc_model.validation_per_location(dfr)
     # rr = validation_nos(df, group_cols=["fuel"])

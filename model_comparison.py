@@ -2,17 +2,13 @@ import sys
 
 sys.path.append("../nelson-fuel-moisture-python/")
 
-import requests
-import io
-
-import nfdrs4py
 import pandas as pd
 from nfdrs4_moisture import compute_nfdrs4
 from NG_FWI import hFWI
 from open_meteo import fetch_hourly
 from process_moisture_data import get_elevation_slope_aspect
 from nelson_moisture import nelson_fuel_moisture
-from model_base import DeadFuelMoistureModel
+from model_base import DeadFuelMoistureModel, LiveFuelMoistureModel
 from process_moisture_data import prepare_weather_features
 
 
@@ -203,21 +199,22 @@ def uk_dataset(site="Cobham Common H15"):
 
 if __name__ == "__main__":
 
-    dfmc_model = DeadFuelMoistureModel()
-    dfr_d = dfmc_model.prepare_training_dataset(
-        fname="data/training_dataset_features_full.parquet"
-    )
-    dfmc_model.train_model(dfr_d)
-    site = "Cobham Common H15"
-    dfs = dfr[dfr.site == site].copy()
-    lon = dfs.longitude.iloc[0]
-    lat = dfs.latitude.iloc[0]
-    start_date = dfs.date.min().strftime("%Y-%m-%d")
-    end_date = dfs.date.max().strftime("%Y-%m-%d")
-    dfr = fetch_meteo_data(lat, lon, start_date, end_date)
-    ffeats = prepare_lagged_features_dead(dfr.copy())
-    ffeats = predict_dfmc_fireinsite(ffeats)
-
+    pass
+    # dfmc_model = DeadFuelMoistureModel()
+    # dfr_d = dfmc_model.prepare_training_dataset(
+    #     fname="data/training_dataset_features_full.parquet"
+    # )
+    # dfmc_model.train_model(dfr_d)
+    # site = "Cobham Common H15"
+    # dfs = dfr[dfr.site == site].copy()
+    # lon = dfs.longitude.iloc[0]
+    # lat = dfs.latitude.iloc[0]
+    # start_date = dfs.date.min().strftime("%Y-%m-%d")
+    # end_date = dfs.date.max().strftime("%Y-%m-%d")
+    # dfr = fetch_meteo_data(lat, lon, start_date, end_date)
+    # ffeats = prepare_lagged_features_dead(dfr.copy())
+    # ffeats = predict_dfmc_fireinsite(ffeats)
+    #
     # pass
     # lat = 35.27618889
     # lon = -112.0632472
