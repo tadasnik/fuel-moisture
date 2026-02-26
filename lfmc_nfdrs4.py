@@ -69,7 +69,7 @@ def calc_lfmc_from_gsi(
     m = (lfmc_max - lfmc_min) / (1 - gu_thresh)
     b = lfmc_max - m
     lfmc = (m * gsi) + b
-    lfmc[lfmc < gu_thresh] = lfmc_min
+    lfmc[gsi < gu_thresh] = lfmc_min
     return lfmc
 
 
@@ -100,7 +100,7 @@ def calc_gsi(df: pd.DataFrame, gsilim, return_intermediate=False) -> pd.DataFram
     prec_ind = calc_ramp_index(prec_roll, gsilim["PrcpRTLow"], gsilim["PrcpRTUp"])
 
     # Daily GSI for four ramp model
-    i_gsi_pe = temp_min_ind * vpd_max_ind * day_len_ind * prec_ind
+    i_gsi_pe = temp_min_ind * vpd_max_ind * prec_ind
     # Smoothed GSI (running average over the GSIPeriod)
     gsi_pe = np.convolve(
         i_gsi_pe, np.ones(gsilim["GSIPeriod"]) / gsilim["GSIPeriod"], mode="same"
@@ -132,7 +132,7 @@ def calc_gsi(df: pd.DataFrame, gsilim, return_intermediate=False) -> pd.DataFram
 
 
 def make_param_ranges_interval(min_val, max_val, interv, min_sep):
-    values = np.arange(min_val, max_val + interv, interv)
+    values = np.arange(min_val, max_val + (interv / 2), interv)
     combs = np.array(np.meshgrid(values, values)).T.reshape(-1, 2)
     mask = (combs[:, 0] + min_sep) < combs[:, 1]
     return combs[mask]
@@ -162,7 +162,7 @@ def generate_parameter_list(n_iter):
         "prec_sum": make_param_ranges_interval(
             gsilim["PrcpRTLow"], gsilim["PrcpRTUp"], 5, 20
         ),
-        "lfmc_lim": make_param_ranges_interval(30, 200, 20, 50),
+        "lfmc_lim": make_param_ranges_interval(30, 200, 5, 40),
         "gu_thresh": np.linspace(0, 0.8, 9),
         "prec_period": np.arange(7, 61),
         "gsi_period": np.arange(7, 61),
@@ -208,110 +208,13 @@ def gsi_optimization(weather_inp, observed, n_iter):
         _, _, r_value, _, _ = linregress(
             weather.dropna()["fmc_%"], weather.dropna()["LFMC"]
         )
+
         r2 = r_value**2
         if r2 > best_r2:
             best_r2 = r2
             best_params = params
             print(r2, s2, best_params)
-
-
-def GridSearchOptimizeGSILFM(
-    weather,
-    observed,
-    label,
-    maxSim=2,
-    mySeed=123456,
-    UseLFMMinMax=False,
-    Herb=True,
-    PInt=20,
-    Lat=45,
-):
-    DEBUG = False
-
-    # Create a range of smoothing / running precip period length ranges intervals
-    smint = range(7, 60, 7)
-    dfsmint = pd.DataFrame(data={"SMInt": smint})
-
-    #### Get a Random Set of Parameters
-    # Make the VPD ranges
-    iVPDP = make_param_ranges(0.5, 9.0, 0.1)  # VPD ranges from 500 to 9000 Pascals
-    # Make the Temperature ranges
-    iTMinP = make_param_ranges(-5, 10, 1)  # MinT ranges from -5 to 10 deg C
-    # Make the Daylength Ranges
-    iDaylP = make_param_ranges(32400, 46800, 3600)  # Dayl ranges from 9 to 13 hours
-    # Make the Prcp ranges
-    iPrcpP = make_param_ranges(0, 50, 1)
-
-    # Make the green-up threshold
-    iThreshP = []
-    for i in range(0, 81, 10):
-        iThreshP.append(float(i / 100))
-    iThreshP = pd.DataFrame(data={"iThresh": iThreshP})
-
-    BestS = 0
-    BestParams = {}
-
-    for i in range(0, maxSim):
-
-        rs = dfsmint.sample(n=1, random_state=mySeed + i)
-        smint = rs.iloc[0].SMInt.astype(int)
-
-        # VPD Params
-        rs = iVPDP.sample(n=1, random_state=mySeed + i)
-        iVPDMin = rs.iloc[0].Lower
-        iVPDMax = rs.iloc[0].Upper
-
-        # TMin Params
-        rs = iTMinP.sample(n=1, random_state=mySeed + i)
-        iTminMin = rs.iloc[0].Lower
-        iTminMax = rs.iloc[0].Upper
-
-        # Daylength Params
-        rs = iDaylP.sample(n=1, random_state=mySeed + i)
-        iDaylMin = rs.iloc[0].Lower
-        iDaylMax = rs.iloc[0].Upper
-
-        # RT Precip Params
-        rs = iPrcpP.sample(n=1, random_state=mySeed + i)
-        iPrcpMin = rs.iloc[0].Lower
-        iPrcpMax = rs.iloc[0].Upper
-
-        # Greenup Threshold
-        rs = iThreshP.sample(n=1, random_state=mySeed + i)
-        iThreshVal = rs.iloc[0].iThresh.astype(float)
-
-        Params = [
-            iTminMin,
-            iTminMax,
-            iVPDMin,
-            iVPDMax,
-            iDaylMin,
-            iDaylMax,
-            iPrcpMin,
-            iPrcpMax,
-            smint,
-            iThreshVal,
-            smint,
-        ]
-
-        S = MakeGSILFMCompareTable4Param(
-            weather,
-            observed,
-            Params,
-            label=label,
-            UseLFMMinMax=UseLFMMinMax,
-            Herb=Herb,
-            Lat=Lat,
-        )
-
-        if S[1] > BestS:
-            BestS = S[1]
-            BestParams = Params
-            print(S[1], S[3], BestS, BestParams)
-
-        # if i % PInt == 0:
-        #     print(S[1], BestS, BestParams)
-    return BestParams
+    return best_params, best_r2, s2
 
 
 if __name__ == "__main__":
@@ -324,13 +227,13 @@ if __name__ == "__main__":
     lonind = 1764
     latind = 1412
     sub_hc = dfrl[
-        (dfrl.lonind == lonind)
-        & (dfrl.latind == latind)
-        & (dfrl.fuel == "Heather canopy")
+        # (dfrl.lonind == lonind)
+        # & (dfrl.latind == latind)
+        (dfrl.fuel == "Heather canopy")
     ].copy()
     start_date = (sub_hc.datetime.min() - pd.Timedelta(days=60)).strftime("%Y-%m-%d")
     end_date = (sub_hc.datetime.max()).strftime("%Y-%m-%d")
-    wx = fetch_daily_meteo_data(
-        sub_hc.latitude.iloc[0], sub_hc.longitude.iloc[0], start_date, end_date
-    )
-    wx["date"] = wx.datetime.dt.date
+    # wx = fetch_daily_meteo_data(
+    #     sub_hc.latitude.iloc[0], sub_hc.longitude.iloc[0], start_date, end_date
+    # )
+    # wx["date"] = wx.datetime.dt.date
