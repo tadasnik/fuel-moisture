@@ -15,8 +15,7 @@ from sklearn.metrics import (
     root_mean_squared_error,
     r2_score,
 )
-from dead_fuel_moisture_model import DeadFuelMoistureModel
-from model_base import LiveFuelMoistureModel, PhenologyModel
+from model_base import LiveFuelMoistureModel, DeadFuelMoistureModel, PhenologyModel
 
 COLOR = "0.3"
 plt.rcParams["font.family"] = "Fira Sans"
@@ -115,9 +114,10 @@ def predict_site_fuel_moisture(dfr, dfrts, model, site, fuel):
     return dfr, dfrst
 
 
-def plot_predictions_for_site_dead_fuel(site, fuel):
+def plot_predictions_for_site_dead_fuel(model, site, fuel):
     fig = plt.figure(figsize=(12, 6))
     ax = fig.add_subplot(111)
+    dfr
     preds, dfr = predict_site_dead_fuel_moisture(model, site, fuel)
     sel = dfr[(dfr.site == site) & (dfr[fuel] == 1.0)].copy()
     sns.lineplot(x="date", y="pred", data=preds, label="Prediction", color="0.5", ax=ax)
@@ -129,7 +129,7 @@ def plot_predictions_for_site_dead_fuel(site, fuel):
     plt.xlabel(" ")
     plt.ylabel("Fuel Moisture Content (%)")
     plt.legend()
-    plt.savefig(f"figures/{site}_dead_{fuel}.png", dpi=300, bbox_inches="tight")
+    # plt.savefig(f"figures/{site}_dead_{fuel}.png", dpi=300, bbox_inches="tight")
     plt.show()
 
 
@@ -758,16 +758,17 @@ def lfmc_location_validation():
 
 
 if __name__ == "__main__":
+    pass
     # lfmc_location_validation()
     # model = LiveFuelMoistureModel(
     #     pickled_model_fname="lfmc_model_no_evi.onnx", phenology_model="ph_model.onnx"
     # )
-    model = LiveFuelMoistureModel(
-        phenology_ph_model="ph_model_q.onnx", phenology_phs_model="ph_model_q_phs.onnx"
-    )
-    dfrl = model.prepare_training_dataset(
-        fname="data/training_dataset_features_full.parquet"
-    )
+    # model = LiveFuelMoistureModel(
+    #     phenology_ph_model="ph_model_q.onnx", phenology_phs_model="ph_model_q_phs.onnx"
+    # )
+    # dfrl = model.prepare_training_dataset(
+    #     fname="data/training_dataset_features_full.parquet"
+    # )
 
     # ph_model = PhenologyModel(pickled_model_fname="ph_model.onnx")
     # ph_model = PhenologyModel()
@@ -775,22 +776,22 @@ if __name__ == "__main__":
     #     fname="data/phenology_training_dataset_features.parquet"
     # )
     #
-    uob = pd.read_parquet("data/training_dataset_features_uob_2025.parquet")
-    oub = uob.reset_index(drop=True)
+    # uob = pd.read_parquet("data/training_dataset_features_uob_2025.parquet")
+    # oub = uob.reset_index(drop=True)
     # ds = pd.read_parquet("data/training_dataset_features_dorset_surrey_sm.parquet")
     # dss = ds[
     #     (ds.Plant == "Calluna") & (ds.Component == "tips") & (ds["Live/dead"] == "live")
     # ].copy()
     #
-    uob = uob[(uob.fuel == "Calluna canopy")].copy()
-    uob["fuel"] = "Heather canopy"
-    uob["fuel_cat"] = "live"
-    uob = model.encode_fuel_features(uob)
+    # uob = uob[(uob.fuel == "Calluna canopy")].copy()
+    # uob["fuel"] = "Heather canopy"
+    # uob["fuel_cat"] = "live"
+    # uob = model.encode_fuel_features(uob)
     # # uob = model.predict_phenology_fuel_moisture(uob)
-    cols = list(
-        model.feature_columns + ["site", "fuel", "lonind", "latind", "date", "fmc_%"]
-    )
-    dfrl_feats = pd.concat([dfrl[cols], uob[cols]], axis=0)
+    # cols = list(
+    #     model.feature_columns + ["site", "fuel", "lonind", "latind", "date", "fmc_%"]
+    # )
+    # dfrl_feats = pd.concat([dfrl[cols], uob[cols]], axis=0)
     # dfrl_feats = pd.concat([dfrl, uob], ignore_index=True)
     #
     # uobt = pd.read_parquet("data/weather_site_features_uob_2025.parquet")
@@ -806,19 +807,23 @@ if __name__ == "__main__":
     # plot_predictions_for_fuel_all_sites(uob, uobt, model, "Heather live canopy")
     # plot_predictions_for_fuel_all_sites_dorset(dss, dsst, model, "Heather live canopy")
 
-    dfrts = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
+    # dfrts = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
     # plot_predicted_evi2_vs_obs_year_fuel(dfr, ph_model, 2022, 9)
 
     # model.validation_train_model()
-    # model = DeadFuelMoistureModel()
+    model = DeadFuelMoistureModel()  # pickled_model_fname="model_onehot_dead.onnx")
+    dfr = model.prepare_training_dataset(
+        fname="data/training_dataset_features_full.parquet"
+    )
+    dfrts = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
     fuel = "Heather canopy"  # Change this to the desired fuel type
     # fuel = "Gorse live canopy"  # Change this to the desired fuel type
-    # site = "Cobham Common H15"
-    site = "Ockham Common H15"
+    site = "Cobham Common H15"
+    # site = "Ockham Common H15"
     # site = "Sugar Loaf H6"
     # site = "Thursley Common H14"
     # var = "ph"
     var = "prec-15sum"  # Change this to the desired variable
-    # plot_predictions_for_site_fuel(
-    #     dfrl, dfrts[dfrts.date < dfrl.date.max()], model, site, fuel, var
-    # )
+    plot_predictions_for_site_fuel(
+        dfr, dfrts[dfrts.date < dfr.date.max()], model, site, fuel, var
+    )

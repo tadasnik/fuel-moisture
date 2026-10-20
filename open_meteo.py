@@ -28,7 +28,7 @@ def fetch_hourly(
     start_date: str,
     end_date: str,
     variables: list[str],
-    opt_params: None | dict[str, float] = None,
+    opt_params: None | dict[str, float | str] = None,
 ) -> pd.DataFrame:
     cache_session = requests_cache.CachedSession(".cache", expire_after=-1)
     retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
@@ -47,9 +47,10 @@ def fetch_hourly(
     # Process first location. Add a for-loop for multiple locations or weather models
     response = responses[0]
     # Process hourly data. The order of variables needs to be the same as requested.
+    utc_offset = response.UtcOffsetSeconds()
     hourly = response.Hourly()
     hourly_data = {
-        "date": pd.date_range(
+        "datetime": pd.date_range(
             start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
             end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
             freq=pd.Timedelta(seconds=hourly.Interval()),
@@ -60,6 +61,7 @@ def fetch_hourly(
         var_dfr = hourly.Variables(nr).ValuesAsNumpy()
         hourly_data[variable] = var_dfr
     hourly_dataframe = pd.DataFrame(data=hourly_data)
+    hourly_dataframe["utc_offset"] = utc_offset
 
     return hourly_dataframe
 
@@ -81,14 +83,14 @@ def fetch_daily(
         "start_date": start_date,
         "end_date": end_date,
         "daily": variables,
+        "timezone": "auto",
     }
     responses = openmeteo.weather_api(url, params=params)
     response = responses[0]
     # Process daily data. The order of variables needs to be the same as requested.
     daily = response.Daily()
-    daily_soil_moisture_0_to_7cm_mean = daily.Variables(0).ValuesAsNumpy()
     daily_data = {
-        "date": pd.date_range(
+        "datetime": pd.date_range(
             start=pd.to_datetime(daily.Time(), unit="s", utc=True),
             end=pd.to_datetime(daily.TimeEnd(), unit="s", utc=True),
             freq=pd.Timedelta(seconds=daily.Interval()),
@@ -162,7 +164,7 @@ def fetch_vpd_hist(lat, lon, start_date, end_date):
     hourly_vapour_pressure_deficit = hourly.Variables(0).ValuesAsNumpy()
 
     hourly_data = {
-        "date": pd.date_range(
+        "datetime": pd.date_range(
             start=pd.to_datetime(hourly.Time(), unit="s", utc=True),
             end=pd.to_datetime(hourly.TimeEnd(), unit="s", utc=True),
             freq=pd.Timedelta(seconds=hourly.Interval()),

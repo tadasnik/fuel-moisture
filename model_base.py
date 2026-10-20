@@ -15,6 +15,7 @@ from sklearn.metrics import (
 )
 import statsmodels.api as sm
 from statsmodels.regression.rolling import RollingOLS
+
 # from validation_figures import plot_training_vs_testing
 
 
@@ -180,6 +181,12 @@ class BaseModel:
         # add types and constrains for OneHotEncoder fuel categories/columns
         # for fuel_name in fuel_encoded.columns:
         #     self.features_dict[fuel_name] = {"type": "float32", "monotonic": 0}
+        return dfr
+
+    def add_fuel_columns(self, dfr):
+        fuel_columns = [x for x in self.features_dict.keys() if x.startswith("fuel_")]
+        for fuel in fuel_columns:
+            dfr[fuel] = 0.0
         return dfr
 
     def validation_train_model(self, dfr: pd.DataFrame):
@@ -495,10 +502,10 @@ class DeadFuelMoistureModel(BaseModel):
             "gti-2": {"type": "float32", "monotonic": -1},
             "gti-3": {"type": "float32", "monotonic": -1},
             "gti-4": {"type": "float32", "monotonic": -1},
-            "vpdmax-15mean": {"type": "float32", "monotonic": -1},
-            "smm100": {"type": "float32", "monotonic": 1},
-            "ddur": {"type": "float32", "monotonic": 0},
-            "ddur_change": {"type": "float32", "monotonic": 0},
+            # "vpdmax-15mean": {"type": "float32", "monotonic": -1},
+            # "smm100": {"type": "float32", "monotonic": 1},
+            # "ddur": {"type": "float32", "monotonic": 0},
+            # "ddur_change": {"type": "float32", "monotonic": 0},
         }
 
         super().__init__(
@@ -513,7 +520,7 @@ class DeadFuelMoistureModel(BaseModel):
         #     dfr.loc[dfr["fuel_type"].str.contains(cat), "fuel_cat"] = cat
         # dfr.loc[dfr["fuel_type"] == "Litter", "fuel_cat"] = "dead"
         dfr = dfr[
-            (dfr["fmc_%"] < 60) & (dfr["fmc_%"] > 0) & (dfr.fuel_cat == "dead")
+            (dfr["fmc_%"] < 60) & (dfr["fmc_%"] > 0) & (dfr.fmc_cat == "dead")
         ].copy()
         return dfr
 
@@ -592,7 +599,7 @@ if __name__ == "__main__":
     dfrl = lfmc_model.prepare_training_dataset(
         fname="data/training_dataset_features_full.parquet"
     )
-    # lfmc_model.train_model(dfrl)
+    lfmc_model.train_model(dfrl)
     res, df = lfmc_model.validation_per_location(dfrl)
     rr = validation_nos(df, group_cols=["fuel"])
     #
@@ -607,7 +614,6 @@ if __name__ == "__main__":
     #     fname="data/training_dataset_features_full.parquet"
     # )
     # dfr["lfmc"] = lfmc_model.predict(dfr)
-    # dfmc_model.train_model(dfr)
     # res, df = dfmc_model.validation_per_location(dfr)
     # rr = validation_nos(df, group_cols=["fuel"])
     # dfr = pd.read_parquet('data/phenology_training_dataset_features_phs.parquet')

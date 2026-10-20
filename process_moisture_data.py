@@ -826,7 +826,7 @@ def get_features(fuel_type, days):
 
 
 if __name__ == "__main__":
-    # pass
+    pass
     # dfr = pd.read_parquet("data/training_dataset_features_full.parquet")
     # dfrts = pd.read_parquet("data/training_dataset_features_full_time_series.parquet")
     # dfr, dfrts = shift_soil_moisture(dfr, dfrts)
@@ -847,7 +847,7 @@ if __name__ == "__main__":
     # dsst.to_parquet("data/weather_site_features_dorset_surrey_sm.parquet")
 
     # pass
-    proc_uob_2025()
+    # proc_uob_2025()
     # proc_dorset_surrey()
     # dfr = proc_fuel_moisture_UK()
     # results = pd.read_parquet("data/weather_results.parquet")
